@@ -189,7 +189,7 @@
       if (!isFinite(amount) || amount <= 0) throw new Error('Số tiền phải lớn hơn 0.');
       const available = this.availableOf(from);
       if (amount > available) {
-        throw new Error('Số dư khả dụng không đủ (còn ' + available + ' MC).');
+        throw new Error('Số dư khả dụng không đủ (còn ' + Math.round(available * 10000) / 10000 + ' MC).');
       }
       const tx = makeTx(from, to, amount, String(note || '').trim().slice(0, 60));
       this.pending.push(tx);
