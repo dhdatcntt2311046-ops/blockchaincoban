@@ -29,7 +29,7 @@ Dữ liệu được lưu trong `localStorage` của trình duyệt. Bấm **Đ�
 ## Cấu trúc thư mục
 
 ```
-minichain/
+blockchaincoban/
 ├── index.html          # Khung giao diện, thanh điều hướng
 ├── css/style.css       # Toàn bộ giao diện (dark theme, responsive)
 ├── js/sha256.js        # Hàm băm SHA-256
