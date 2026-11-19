@@ -525,6 +525,7 @@
         <input class="input" id="ex-search" placeholder="Tìm theo số block, hash, mã giao dịch hoặc tên ví…" value="${esc(ui.query)}">
         <label class="switch ${ui.tamper ? 'on' : ''}"><input type="checkbox" id="ex-tamper" ${ui.tamper ? 'checked' : ''}><i></i>Chế độ thử sửa dữ liệu</label>
         <button class="btn btn-ghost btn-sm" id="ex-check" style="margin-left:auto">Kiểm tra toàn chuỗi</button>
+        <button class="btn btn-ghost btn-sm" id="ex-export">Tải chuỗi (JSON)</button>
       </div>
       ${ui.tamper ? `<div class="banner bad"><div class="b-icon">✎</div>
         <div><b>Đang bật chế độ thử sửa dữ liệu</b><p>Đổi số tiền của một giao dịch bất kỳ để thấy hash thay đổi và chuỗi phía sau bị phá vỡ.</p></div></div>` : ''}
@@ -542,6 +543,25 @@
       s.setSelectionRange(pos, pos);
     });
     $('#ex-tamper').addEventListener('change', (e) => { ui.tamper = e.target.checked; render(); });
+    $('#ex-export').addEventListener('click', () => {
+      const data = JSON.stringify({
+        exportedAt: new Date().toISOString(),
+        valid: bc.isValid(),
+        reward: bc.reward,
+        wallets: bc.wallets,
+        chain: bc.chain,
+        pending: bc.pending
+      }, null, 2);
+      const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'minichain-' + bc.chain.length + '-blocks.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast('Đã tải xuống chuỗi khối dạng JSON.', 'ok');
+    });
     $('#ex-check').addEventListener('click', () => {
       const ok = bc.isValid();
       toast(ok ? 'Đã kiểm tra: toàn bộ chuỗi hợp lệ.' : 'Đã kiểm tra: chuỗi có block không hợp lệ!', ok ? 'ok' : 'bad');
