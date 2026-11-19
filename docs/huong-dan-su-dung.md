@@ -40,6 +40,17 @@ Lần đầu mở (hoặc sau khi đặt lại), ứng dụng tự tạo:
 
 ## 4. Các chức năng theo từng màn hình
 
+### 4.0. Đăng nhập ví
+Gửi MC và đào block đều cần **đăng nhập vào ví** – ứng dụng không cho chọn ví của người khác.
+
+- Bấm **Đăng nhập ví** ở thanh trên cùng (hoặc nút **🔑 Đăng nhập** trên thẻ ví). Hộp thoại có 3 cách:
+  - **Mật khẩu**: nhập tên ví (hoặc địa chỉ) và mật khẩu. Ví mẫu An, Bình, Chi, Dũng có mật khẩu `123456`.
+  - **Khoá bí mật**: dán khoá 64 ký tự hex được cấp khi tạo ví. Ứng dụng tính lại địa chỉ từ khoá rồi tìm ví khớp; khoá không bị lưu.
+  - **MetaMask**: MetaMask yêu cầu ký một thông điệp đăng nhập (không tốn phí). Nếu địa chỉ chưa có trong MiniChain, ví được tự thêm vào.
+- Sau khi đăng nhập, nút trên thanh trên cùng hiện tên ví. Bấm vào để xem số dư, sao chép địa chỉ hoặc **Đăng xuất**.
+- Phiên đăng nhập được giữ khi tải lại trang. Đổi tài khoản trong MetaMask sẽ tự đăng xuất ví MetaMask. **Đặt lại dữ liệu** cũng đăng xuất.
+- Sai mật khẩu, khoá sai định dạng hoặc không khớp ví nào đều được báo lỗi rõ ràng.
+
 ### 4.1. Tổng quan
 - 4 thẻ thống kê: số block, số giao dịch đã xác nhận, số giao dịch đang chờ, tổng cung MC.
 - Khung trạng thái chuỗi. Nếu có block bị sửa, khung chuyển đỏ, ghi rõ block nào, kèm nút **Xem chi tiết**.
@@ -49,28 +60,34 @@ Lần đầu mở (hoặc sau khi đặt lại), ứng dụng tự tạo:
 ### 4.2. Ví
 - Mỗi thẻ ví có tên, địa chỉ (dạng `0x…`, sinh từ SHA-256), số dư, số giao dịch đã tham gia và số tiền đang chờ gửi.
 - **Sao chép**: chép địa chỉ ví.
-- **Gửi tiền**: mở trang Giao dịch, chọn sẵn ví này làm ví gửi.
-- **Đào bằng ví này**: mở trang Đào block, chọn sẵn ví này làm thợ đào.
-- **Tạo ví mới**: nhập tên (tối đa 24 ký tự, không trùng tên ví khác). Ví mới có 0 MC.
+- **🔑 Đăng nhập**: mở hộp thoại đăng nhập, điền sẵn tên ví. Ví đang dùng có nhãn **● Đang đăng nhập** và nút **Đăng xuất**.
+- **Tạo ví mới**: nhập tên (tối đa 24 ký tự, không trùng), mật khẩu (ít nhất 6 ký tự) và nhập lại mật khẩu. Ứng dụng sinh **khoá bí mật** ngẫu nhiên, địa chỉ ví = SHA-256(khoá), và hiện khoá **đúng một lần** để bạn lưu lại. Bấm **Tôi đã lưu khoá – vào ví** để đăng nhập ngay. Ví mới có 0 MC.
+- Mật khẩu không được lưu trực tiếp mà chỉ lưu dạng băm SHA-256 có muối (salt).
 - Ví liên kết từ MetaMask có nhãn **MetaMask**.
 
 ### 4.3. Giao dịch
-1. Chọn **Ví gửi**. Ngay bên dưới hiện số dư và số dư khả dụng (đã trừ các giao dịch đang chờ).
-2. Chọn **Ví nhận**, nhập **Số tiền** (có nút nhanh 5 / 10 / 25 / Tối đa), thêm **Ghi chú** nếu muốn (tối đa 60 ký tự).
-3. Bấm **Gửi vào mempool**.
+Chưa đăng nhập thì form gửi bị khoá và hiện nút **Đăng nhập ví**.
 
-Ứng dụng từ chối và báo lỗi ngay khi:
-- Ví gửi trùng ví nhận.
-- Số tiền bằng 0 hoặc âm.
-- Số tiền vượt số dư khả dụng.
+1. **Ví gửi** luôn là ví đang đăng nhập, kèm số dư khả dụng (đã trừ giao dịch đang chờ và phí).
+2. Chọn **Ví nhận** trong danh sách (không gồm ví của bạn) hoặc dán **địa chỉ ví nhận**.
+3. Nhập **Số tiền** (nút nhanh 5 / 10 / 25 / Tối đa) và **Phí giao dịch** (Thấp 0,01 / Thường 0,1 / Nhanh 0,5; mặc định 0,1 MC, tối đa 10 MC). Ứng dụng hiện **tổng trừ khỏi ví** = số tiền + phí.
+4. Thêm **Ghi chú** nếu muốn (tối đa 60 ký tự) rồi bấm **Gửi vào mempool**.
 
-Giao dịch hợp lệ được đưa vào **Mempool** (danh sách chờ) bên phải. Có thể **Huỷ** giao dịch khi nó còn chờ. Bảng **Lịch sử giao dịch đã xác nhận** liệt kê mọi giao dịch đã nằm trong block, kèm số block.
+Ứng dụng từ chối và báo lỗi khi: số tiền ≤ 0, phí âm hoặc quá 10 MC, số tiền + phí vượt số dư khả dụng, hoặc địa chỉ nhận không có trong MiniChain.
+
+Giao dịch hợp lệ vào **Mempool** bên phải (hiện cả phí). Bạn chỉ **Huỷ** được giao dịch của chính mình, và không huỷ được giao dịch đang được đào. Bảng **Lịch sử giao dịch đã xác nhận** có cột **Block**, **Xác nhận** (số block đã xây sau block đó; từ 6 trở lên có dấu ✓) và **Phí**.
 
 Nếu ví gửi là **ví MetaMask**, MetaMask sẽ hiện cửa sổ yêu cầu ký trước khi giao dịch vào mempool (xem mục 4.6).
 
 ### 4.4. Đào block (Proof-of-Work)
-- **Thợ đào nhận thưởng**: ví sẽ nhận 50 MC nếu đào thành công.
-- **Độ khó** từ 1 đến 5, là số chữ số 0 bắt buộc ở đầu hash:
+Phần đào block mô phỏng các luật của Bitcoin ở quy mô nhỏ:
+
+- **Thợ đào** là ví đang đăng nhập (chưa đăng nhập thì nút đào bị khoá).
+- **Độ khó do mạng quyết định**, không tự chọn: cứ 3 block, mạng tính thời gian đào trung bình; nhanh hơn 2,5 giây thì độ khó +1, chậm hơn 10 giây thì −1 (trong khoảng 3–5), để giữ khoảng 5 giây/block.
+- **Phần thưởng** bắt đầu 50 MC và **giảm một nửa sau mỗi 10 block** (halving: 50 → 25 → 12,5…). Màn hình hiện số block còn lại tới lần halving và lần điều chỉnh độ khó.
+- **Phí giao dịch**: mỗi block chứa **tối đa 4 giao dịch**, thợ đào chọn giao dịch **phí cao nhất** trước. Bảng *Mempool – xếp theo phí* đánh dấu giao dịch nào "Vào block này", giao dịch nào "Chờ block sau".
+- **Coinbase**: giao dịch đầu tiên của block trả cho thợ đào **phần thưởng + tổng phí**. Ô *Tổng nhận nếu đào được* hiện con số này.
+- **Độ khó** là số chữ số 0 bắt buộc ở đầu hash:
 
 | Độ khó | Hash phải bắt đầu bằng | Số lần thử trung bình |
 |---|---|---|
@@ -80,20 +97,22 @@ Nếu ví gửi là **ví MetaMask**, MetaMask sẽ hiện cửa sổ yêu cầu
 | 4 | `0000` | 65.536 |
 | 5 | `00000` | 1.048.576 |
 
-- Bấm **Bắt đầu đào block**. Bảng điều khiển hiển thị trực tiếp nonce đang thử, hash hiện tại (các số 0 ở đầu tô xanh), tốc độ (số hash/giây) và thời gian.
+- Bấm **Bắt đầu đào block**. Bảng điều khiển hiện **tiêu đề block** (hash trước, Merkle root, thời gian, độ khó, nonce, hash), **tốc độ băm** (H/s), thời gian đào, **số lần thử so với kỳ vọng** kèm thanh tiến độ, và các hash vừa thử gần nhất. Mỗi lần thử có xác suất 1/16^d, nên có lúc may mắn tìm ra sớm, có lúc phải thử nhiều hơn kỳ vọng.
 - Có thể **Dừng đào** giữa chừng. Khi đó không block nào được thêm.
-- Đào xong: block mới chứa giao dịch thưởng và toàn bộ giao dịch trong mempool, mempool được làm trống.
+- Đào xong: block mới chứa coinbase và tối đa 4 giao dịch; giao dịch còn lại tiếp tục chờ. Ứng dụng báo số lần thử, thời gian đào, số MC nhận được, và thông báo khi mạng đổi độ khó hoặc khi halving.
+- Bảng **Lịch sử đào gần đây** liệt kê từng block: thợ đào, độ khó, số lần thử, thời gian đào, thưởng + phí.
 - Có thể chuyển sang màn hình khác trong lúc đào. Việc đào vẫn chạy và hoàn tất.
 - Nếu chuỗi đang **bị sửa đổi**, ứng dụng không cho đào. Phải sửa chuỗi trước.
 
 ### 4.5. Khám phá chuỗi
-- Mỗi block hiển thị số thứ tự, thời gian, người đào, **hash**, **hash của block trước (previousHash)**, nonce, độ khó và bảng giao dịch.
+- Mỗi block hiển thị số thứ tự, thời gian, người đào, thời gian đào, số xác nhận, **hash**, **hash của block trước (previousHash)**, **Merkle root**, nonce, độ khó và bảng giao dịch (có cột phí).
 - Giữa hai block có đường nối kèm ghi chú "previousHash khớp với hash block #…". Liên kết bị đứt thì đường nối chuyển đỏ.
 - **Tìm kiếm** theo số block (`#1`), một phần hash, mã giao dịch hoặc tên ví.
 - **Kiểm tra toàn chuỗi**: kiểm tra lại mọi block và báo kết quả.
 - **Tải chuỗi (JSON)**: tải toàn bộ dữ liệu (ví, block, mempool) về máy dưới dạng file JSON.
 - **Chế độ thử sửa dữ liệu**: số tiền của mọi giao dịch thành ô nhập, sửa được. Sau khi sửa:
-  - Block bị sửa chuyển đỏ. Ứng dụng hiện cả hash tính lại lẫn lý do không hợp lệ.
+  - Block bị sửa chuyển đỏ. Ứng dụng hiện **Merkle root tính lại** (khác Merkle root trong tiêu đề) và lý do không hợp lệ.
+  - Nếu sửa giao dịch coinbase cho thợ đào nhận nhiều hơn thưởng + phí, block vi phạm **luật đồng thuận** và vẫn không hợp lệ kể cả khi đào lại.
   - Nút **Đào lại block này** tìm nonce mới cho block đó. Block đó hợp lệ trở lại, nhưng **block kế tiếp đứt liên kết** vì hash đã đổi. Muốn che giấu việc sửa, phải đào lại toàn bộ các block phía sau. Đây là cách minh hoạ tính bất biến của blockchain.
 - Giao dịch được ký bằng MetaMask có nhãn **✍ Đã ký**.
 
@@ -102,9 +121,9 @@ Chỉ hoạt động khi mở ứng dụng qua link web và trình duyệt đã 
 
 1. **Kết nối**: bấm **Kết nối MetaMask** (ở thanh trên cùng hoặc trong màn hình này), rồi chọn tài khoản và xác nhận trong cửa sổ MetaMask.
 2. **Thông tin tài khoản**: địa chỉ đầy đủ, mạng đang dùng (Ethereum, Sepolia, Polygon…), số dư ETH, link xem trên trình khám phá khối (Etherscan). Có các nút **Làm mới số dư**, **Chuyển sang Sepolia** và **Ngắt kết nối**.
-3. **Liên kết với MiniChain**: bấm **Thêm vào MiniChain** để địa chỉ MetaMask trở thành một ví trong MiniChain (tên dạng "MetaMask ABCD", số dư ban đầu 0 MC). Sau đó có thể:
-   - **Đào bằng ví này** để nhận MC thưởng.
-   - **Gửi MC từ ví này**. Mỗi giao dịch phải được **ký số** trong MetaMask. Chữ ký và nội dung đã ký được lưu kèm giao dịch trong block.
+3. **Liên kết & đăng nhập MiniChain**: bấm **Thêm vào MiniChain & đăng nhập** (hoặc **Đăng nhập MiniChain bằng ví này** nếu đã liên kết). MetaMask yêu cầu ký thông điệp đăng nhập; địa chỉ trở thành ví MiniChain (tên dạng "MetaMask ABCD", số dư ban đầu 0 MC) và bạn được đăng nhập bằng ví đó. Sau đó có thể:
+   - **Đào block** để nhận MC thưởng.
+   - **Gửi MC**. Mỗi giao dịch phải được **ký số** trong MetaMask (nội dung ký gồm người nhận, số tiền, phí, mã giao dịch). Chữ ký được lưu kèm giao dịch trong block.
 4. **Ký thông điệp**: nhập nội dung bất kỳ rồi bấm **Ký bằng MetaMask** để nhận chữ ký số. Thao tác này chứng minh quyền sở hữu ví và không tốn phí.
 5. **Gửi ETH thử nghiệm**: chỉ bật trên mạng thử nghiệm (Sepolia, Holesky, localhost) để tránh mất tiền thật. Nhập địa chỉ nhận và số lượng, xác nhận trong MetaMask, ứng dụng hiện mã giao dịch kèm link Etherscan.
 6. **Nhật ký kết nối**: ghi lại các sự kiện kết nối, đổi tài khoản, đổi mạng, ký và gửi.
@@ -114,7 +133,7 @@ Chỉ hoạt động khi mở ứng dụng qua link web và trình duyệt đã 
 > MiniChain **không bao giờ** hỏi cụm từ khôi phục (seed phrase) hay khoá bí mật. Mọi thao tác ký đều do bạn xác nhận trong MetaMask.
 
 ### 4.7. Hướng dẫn
-- Giải thích 6 khái niệm: hàm băm, block, Proof-of-Work, chuỗi liên kết, mempool, ví MetaMask & chữ ký số.
+- Giải thích 9 khái niệm: hàm băm, block & Merkle root, Proof-of-Work, phần thưởng – phí – halving, độ khó tự điều chỉnh, chuỗi liên kết, mempool & xác nhận, đăng nhập ví, ví MetaMask & chữ ký số.
 - Ô **Thử hàm băm SHA-256**: gõ nội dung để thấy hash thay đổi hoàn toàn khi chỉ đổi 1 ký tự.
 - Các bước kịch bản demo.
 
@@ -123,13 +142,14 @@ Chỉ hoạt động khi mở ứng dụng qua link web và trình duyệt đã 
 ## 5. Kịch bản trình bày gợi ý (khoảng 5 phút)
 
 1. **Tổng quan**: giới thiệu số block, tổng cung, trạng thái chuỗi hợp lệ.
-2. **Giao dịch**: gửi 10 MC từ An sang Bình. Thử gửi vượt số dư để thấy ứng dụng chặn.
-3. **Đào block**: chọn độ khó 3 hoặc 4, bấm đào, giải thích nonce và hash có các số 0 ở đầu.
-4. **Khám phá chuỗi**: chỉ ra `previousHash` của block sau trùng với `hash` của block trước.
-5. Bật **Chế độ thử sửa dữ liệu**, đổi số tiền trong block #1: block chuyển đỏ, nhãn trên cùng báo "Chuỗi bị sửa đổi", trang Đào block bị khoá.
-6. Bấm **Đào lại** block #1: block #2 đứt liên kết. Kết luận: muốn gian lận phải đào lại cả chuỗi.
-7. **Ví MetaMask**: kết nối, **Thêm vào MiniChain**, đào 1 block bằng ví này, rồi gửi MC từ ví này. MetaMask hiện yêu cầu ký, giao dịch có nhãn "Đã ký".
-8. Bấm **Đặt lại dữ liệu** để quay về trạng thái ban đầu.
+2. **Đăng nhập ví** An (mật khẩu `123456`). Thử sai mật khẩu để thấy ứng dụng chặn.
+3. **Giao dịch**: gửi 10 MC sang Bình với phí 0,5. Thử gửi vượt số dư để thấy ứng dụng chặn.
+4. **Đào block**: bấm đào, giải thích tiêu đề block, nonce, hash có các số 0 ở đầu; chỉ ra coinbase = thưởng + phí. Đào thêm vài block để thấy độ khó tự tăng.
+5. **Khám phá chuỗi**: chỉ ra `previousHash` của block sau trùng với `hash` của block trước.
+6. Bật **Chế độ thử sửa dữ liệu**, đổi số tiền trong block #1: Merkle root lệch, block chuyển đỏ, nhãn trên cùng báo "Chuỗi bị sửa đổi", trang Đào block bị khoá.
+7. Bấm **Đào lại** block #1: block #2 đứt liên kết. Kết luận: muốn gian lận phải đào lại cả chuỗi.
+8. **Ví MetaMask**: đăng nhập bằng MetaMask (ký thông điệp đăng nhập), đào 1 block, rồi gửi MC. MetaMask hiện yêu cầu ký, giao dịch có nhãn "Đã ký".
+9. Bấm **Đặt lại dữ liệu** để quay về trạng thái ban đầu.
 
 ## 6. Lưu trữ và đặt lại dữ liệu
 
