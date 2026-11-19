@@ -6,7 +6,7 @@
   'use strict';
 
   const { Blockchain, mineAsync, ZERO_HASH, SYSTEM, DEMO_PASSWORD, ADMIN_USER, ADMIN_PASSWORD } = window.MiniChain;
-  const STORE_KEY = 'minichain.v2';          // v2: ví có mật khẩu + khoá bí mật
+  const STORE_KEY = 'minichain.v3';          // v3: thêm cửa hàng, hoá đơn, đổi tiền, tiết kiệm, điều kiện đào
   const SESSION_KEY = 'minichain.session';   // địa chỉ ví đang đăng nhập, hoặc "admin"
 
   // ---------- Trạng thái ----------
@@ -21,8 +21,19 @@
     query: '',
     focusBlock: null,
     mining: null,       // { block, stop, progress }
-    remining: null      // chỉ số block đang được đào lại
+    remining: null,     // chỉ số block đang được đào lại
+    payCode: ''         // mã hoá đơn mở từ đường dẫn ?pay=HD-…
   };
+  (function readPayLink() {
+    try {
+      const code = new URLSearchParams(window.location.search).get('pay');
+      if (code) {
+        ui.payCode = code.toUpperCase();
+        ui.view = 'invoices';
+        history.replaceState(null, '', window.location.pathname + window.location.hash);
+      }
+    } catch (e) { /* bỏ qua */ }
+  })();
 
   function load() {
     try {
@@ -401,10 +412,17 @@
         ${opts.block ? `<td><button class="link" data-block="${r.block}">#${r.block}</button></td><td>${confChip(bc.confirmationsOf(r.block))}</td>` : ''}
         <td>${who(r.tx.from)}</td>
         <td>${who(r.tx.to)}</td>
-        <td class="muted">${esc(r.tx.note || '—')}${r.tx.signature ? ' <span class="chip ok" title="Đã ký bằng MetaMask">✍ Đã ký</span>' : ''}</td>
+        <td class="muted">${kindChip(r.tx)}${esc(r.tx.note || '—')}${r.tx.signature ? ' <span class="chip ok" title="Đã ký bằng MetaMask">✍ Đã ký</span>' : ''}</td>
         <td class="amt muted">${r.tx.from === SYSTEM ? '—' : fmtAmt(r.tx.fee || 0)}</td>
         <td class="amt">${fmtAmt(r.tx.amount)}</td>
       </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  /** Nhãn loại giao dịch dịch vụ (mua hàng, hoá đơn, đổi tiền, tiết kiệm). */
+  const KINDS = { purchase: ['🛒', 'Mua hàng'], invoice: ['🧾', 'Hoá đơn'], fx: ['💱', 'Đổi tiền'], stake: ['🏦', 'Gửi tiết kiệm'], unstake: ['🏦', 'Rút tiết kiệm'] };
+  function kindChip(tx) {
+    const k = KINDS[tx.kind];
+    return k ? `<span class="chip kind" title="${k[1]}${tx.ref ? ' · ' + tx.ref : ''}">${k[0]} ${k[1]}</span> ` : '';
   }
 
   /** Số xác nhận: ≥ 6 coi như chắc chắn (giống quy ước của Bitcoin). */
@@ -420,7 +438,7 @@
 
   /** Danh sách ví nhận (không gồm ví của chính mình). */
   function recipientOptions(exclude) {
-    return bc.wallets.filter((w) => w.address !== exclude).map((w) => `<option value="${w.address}">${esc(w.name)} · ${short(w.address, 6, 4)}</option>`).join('');
+    return bc.wallets.filter((w) => w.address !== exclude && !w.system).map((w) => `<option value="${w.address}">${esc(w.name)} · ${short(w.address, 6, 4)}</option>`).join('');
   }
 
   // ---------- Màn hình: Tổng quan ----------
@@ -485,7 +503,8 @@
         <div class="wallet-bal">${fmtNum(bal)} <small>MC</small></div>
         <div class="wallet-meta"><span>${txCount} giao dịch</span><span>${out ? 'Đang chờ gửi: −' + fmtAmt(out) : 'Không có GD chờ'}</span></div>
         <div class="actions">
-          ${w.locked ? '<span class="chip bad">🔒 Bị khoá bởi quản trị viên</span>' : w.address === ui.me
+          ${w.system ? `<span class="chip accent">⚙ Ví hệ thống · ${w.system === 'exchange' ? 'đổi tiền' : 'tiết kiệm'}</span>`
+            : w.locked ? '<span class="chip bad">🔒 Bị khoá bởi quản trị viên</span>' : w.address === ui.me
             ? '<span class="chip ok">● Đang đăng nhập</span><button class="btn btn-sm btn-ghost" data-logout>Đăng xuất</button>'
             : `<button class="btn btn-sm btn-ghost" data-login="${esc(w.name)}" ${w.metamask ? 'data-login-tab="metamask"' : ''}>🔑 Đăng nhập</button>`}
         </div>
@@ -527,7 +546,7 @@
       ? bc.pending.map((tx) => `<div class="pool-item">
           <div class="flow">${who(tx.from)}<span class="arrow">→</span>${who(tx.to)}</div>
           <div class="amt">${fmtAmt(tx.amount)}<small class="fee">phí ${fmtAmt(tx.fee || 0)}</small></div>
-          <div class="sub"><span class="mono">#${tx.id.slice(0, 8)}</span><span>${esc(tx.note || 'Không ghi chú')}</span>${tx.signature ? '<span class="chip ok">✍ Đã ký bằng MetaMask</span>' : ''}
+          <div class="sub"><span class="mono">#${tx.id.slice(0, 8)}</span><span>${kindChip(tx)}${esc(tx.note || 'Không ghi chú')}</span>${tx.signature ? '<span class="chip ok">✍ Đã ký bằng MetaMask</span>' : ''}
             <span>${fmtTime(tx.time)}</span>${tx.from === ui.me ? `<button class="remove" data-cancel="${tx.id}">Huỷ</button>` : ''}</div>
         </div>`).join('')
       : '<div class="empty">Mempool trống. Hãy tạo giao dịch mới.</div>';
@@ -568,9 +587,11 @@
         toast('Giao dịch đang được đào vào block – không thể huỷ.', 'bad');
         return;
       }
-      bc.pending = bc.pending.filter((tx) => !(tx.id === b.dataset.cancel && tx.from === ui.me));
-      save();
-      toast('Đã huỷ giao dịch.');
+      try {
+        const tx = bc.cancelPending(b.dataset.cancel, ui.me);
+        save();
+        toast(tx.kind ? 'Đã huỷ giao dịch và hoàn tác ' + (KINDS[tx.kind] ? KINDS[tx.kind][1].toLowerCase() : 'dịch vụ') + ' ' + (tx.ref || '') + '.' : 'Đã huỷ giao dịch.');
+      } catch (err) { toast(err.message, 'bad'); }
       render();
     }));
 
@@ -648,7 +669,10 @@
     const expected = Math.pow(16, d);
 
     // Block ứng viên: đang đào thì dùng block thật, chưa đào thì xem trước
-    const cand = m ? m.block : (w ? bc.createCandidate(w.address) : null);
+    const checks = bc.miningChecks(w ? w.address : null);
+    const canMine = checks.every((c) => c.ok);
+    let cand = m ? m.block : null;
+    if (!cand && w && canMine) { try { cand = bc.createCandidate(w.address); } catch (e) { cand = null; } }
     const picked = bc.selectForBlock();
     const pickedIds = new Set((m ? m.block.transactions : picked).map((t) => t.id));
     const fees = picked.reduce((s, t) => s + Number(t.fee || 0), 0);
@@ -682,7 +706,7 @@
             <td class="muted">${i + 1}</td><td>${who(tx.from)}</td><td>${who(tx.to)}</td>
             <td class="amt">${fmtAmt(tx.amount)}</td><td class="amt">${fmtAmt(tx.fee || 0)}</td>
             <td>${pickedIds.has(tx.id) ? '<span class="chip ok">Vào block này</span>' : '<span class="chip warn">Chờ block sau</span>'}</td></tr>`).join('')}</tbody></table></div>`
-      : '<div class="empty">Mempool trống – block mới chỉ chứa giao dịch coinbase (phần thưởng).</div>';
+      : `<div class="empty">${R.minTxToMine > 0 ? 'Mempool trống – cần ít nhất ' + R.minTxToMine + ' giao dịch chờ thì mới đào được block.' : 'Mempool trống – block mới chỉ chứa giao dịch coinbase (phần thưởng).'}</div>`;
 
     const history = bc.chain.slice(1).reverse().slice(0, 8);
     const historyHtml = history.length
@@ -703,6 +727,13 @@
     return `${valid ? '' : `<div class="banner bad"><div class="b-icon">!</div>
         <div><b>Không thể đào khi chuỗi không hợp lệ</b><p>Các nút trong mạng sẽ từ chối block nối vào một chuỗi sai. Hãy vào "Khám phá chuỗi" để đào lại các block bị sửa, hoặc đặt lại dữ liệu.</p></div>
         <button class="btn btn-sm btn-danger" data-go="explorer">Sửa chuỗi</button></div>`}
+      <div class="card" id="m-checks">
+        <div class="card-head"><h3>Điều kiện đào block</h3>
+          <span class="chip ${canMine ? 'ok' : 'warn'}">${checks.filter((c) => c.ok).length}/${checks.length} đạt</span></div>
+        <div class="checklist">${checks.map((c) => `<div class="check ${c.ok ? 'ok' : 'bad'}" data-check="${c.key}">
+          <span class="ck">${c.ok ? '✓' : '✕'}</span><div><b>${esc(c.label)}</b><small>${esc(c.detail)}</small></div></div>`).join('')}</div>
+        <p class="note">Mạng chỉ chấp nhận block thoả các điều kiện: block có ít nhất ${R.minTxToMine} giao dịch của người dùng, thợ đào có số dư ≥ ${fmtAmt(R.minMinerBalance)} trước block đó (tiền đặt cọc, chống tạo ví rác để đào), và một ví không đào quá ${R.maxConsecutiveBlocks} block liên tiếp (chống độc chiếm). Vi phạm thì block bị đánh dấu không hợp lệ.</p>
+      </div>
       <div class="grid halves">
         <div class="card">
           <div class="card-head"><h3>Thông số mạng</h3><span class="chip accent">Proof-of-Work</span></div>
@@ -717,7 +748,7 @@
           <div class="kv"><span>Giao dịch đưa vào block</span><b>${m ? m.block.transactions.length - 1 : picked.length} / tối đa ${R.maxTxPerBlock}</b></div>
           <div style="margin-top:14px">
             ${m ? '<button class="btn btn-block btn-danger" id="m-stop">Dừng đào</button>'
-              : `<button class="btn btn-block" id="m-start" ${valid && w ? '' : 'disabled'}>⛏ ${w ? 'Bắt đầu đào block #' + (bc.latest.index + 1) : 'Đăng nhập ví để đào'}</button>`}
+              : `<button class="btn btn-block" id="m-start" ${canMine ? '' : 'disabled'}>⛏ ${!w ? 'Đăng nhập ví để đào' : canMine ? 'Bắt đầu đào block #' + (bc.latest.index + 1) : 'Chưa đủ điều kiện đào'}</button>`}
           </div>
           <p class="note">Độ khó do mạng quyết định, không do thợ đào tự chọn: cứ ${R.adjustInterval} block, nếu thời gian đào trung bình nhanh hơn ${fmtMs(R.targetBlockMs / 2)} thì độ khó tăng, chậm hơn ${fmtMs(R.targetBlockMs * 2)} thì giảm (trong khoảng ${R.minDifficulty}–${R.maxDifficulty}).</p>
         </div>
@@ -746,7 +777,8 @@
   function startMining() {
     if (ui.mining || !bc.isValid()) return;
     if (!me()) { openLogin(); return; }
-    const block = bc.createCandidate(ui.me);
+    let block;
+    try { block = bc.createCandidate(ui.me); } catch (err) { toast(err.message, 'bad'); render(); return; }
     const job = { block: block, stop: false, progress: null, log: [] };
     ui.mining = job;
     render();
@@ -958,14 +990,14 @@
     const next = bc.latest.index + 1;
 
     const walletRows = bc.wallets.map((w) => `<tr>
-        <td>${who(w.address)}${w.metamask ? ' <span class="chip accent">MetaMask</span>' : ''}</td>
+        <td>${who(w.address)}${w.metamask ? ' <span class="chip accent">MetaMask</span>' : ''}${w.system ? ' <span class="chip accent">⚙ Hệ thống</span>' : ''}</td>
         <td class="mono muted">${short(w.address, 8, 6)}</td>
         <td class="amt">${fmtAmt(bc.balanceOf(w.address))}</td>
         <td>${w.locked ? '<span class="chip bad">🔒 Bị khoá</span>' : '<span class="chip ok">Hoạt động</span>'}</td>
         <td><div class="row-actions">
-          ${w.locked ? `<button class="btn btn-sm btn-ghost" data-adm-unlock="${w.address}">Mở khoá</button>`
+          ${w.system ? '' : w.locked ? `<button class="btn btn-sm btn-ghost" data-adm-unlock="${w.address}">Mở khoá</button>`
             : `<button class="btn btn-sm btn-ghost" data-adm-lock="${w.address}">Khoá</button>`}
-          <button class="btn btn-sm btn-ghost" data-adm-pw="${w.address}" ${w.metamask ? 'disabled title="Ví MetaMask không dùng mật khẩu"' : ''}>Đặt lại mật khẩu</button>
+          <button class="btn btn-sm btn-ghost" data-adm-pw="${w.address}" ${w.metamask || w.system ? 'disabled title="Ví này không dùng mật khẩu"' : ''}>Đặt lại mật khẩu</button>
           <button class="btn btn-sm" data-adm-mint="${w.address}">+ Cấp MC</button>
         </div></td></tr>`).join('');
 
@@ -981,7 +1013,8 @@
         <td>#${v.from}${v.from === 0 ? ' <span class="chip">Ban đầu</span>' : ''}</td>
         <td class="amt">${fmtAmt(v.rules.initialReward)}</td><td class="amt">${v.rules.halvingInterval} block</td>
         <td class="amt">${v.rules.maxTxPerBlock}</td><td class="amt">${v.rules.targetBlockMs / 1000} giây</td>
-        <td class="amt">${v.rules.adjustInterval} block</td><td class="amt">${v.rules.minDifficulty}–${v.rules.maxDifficulty}</td></tr>`).join('');
+        <td class="amt">${v.rules.adjustInterval} block</td><td class="amt">${v.rules.minDifficulty}–${v.rules.maxDifficulty}</td>
+        <td class="amt">${v.rules.minTxToMine || 0} GD · ${fmtNum(v.rules.minMinerBalance || 0)} MC · ${v.rules.maxConsecutiveBlocks || '∞'} liên tiếp</td></tr>`).join('');
 
     const logHtml = bc.adminLog.length
       ? `<div class="mm-log">${bc.adminLog.map((l) => `<div><time>${fmtTime(l.time)}</time><span>${esc(l.action)}</span></div>`).join('')}</div>`
@@ -1013,19 +1046,44 @@
             ${field('adm-diff', 'Độ khó hiện tại', bc.difficulty, 'min="1" max="5"')}
             ${field('adm-dmin', 'Độ khó tối thiểu', R.minDifficulty, 'min="1" max="5"')}
             ${field('adm-dmax', 'Độ khó tối đa', R.maxDifficulty, 'min="1" max="5"')}
+            ${field('adm-mintx', 'Số GD tối thiểu để đào', R.minTxToMine, 'min="0" max="20"')}
+            ${field('adm-minbal', 'Số dư tối thiểu của thợ đào (MC)', R.minMinerBalance, 'min="0" max="100000" step="any"')}
+            ${field('adm-maxrun', 'Số block liên tiếp tối đa / ví', R.maxConsecutiveBlocks, 'min="1" max="1000"')}
           </div>
           <div class="form-error" id="adm-rules-error"></div>
           <button class="btn btn-block" type="submit" ${ui.mining ? 'disabled' : ''}>Áp dụng luật mới</button>
         </form>
         <div class="card">
           <div class="card-head"><h3>Lịch sử phiên bản luật</h3><span class="hint">${bc.ruleHistory.length} phiên bản</span></div>
-          <div class="table-wrap"><table class="compact"><thead><tr><th>Từ block</th><th class="amt">Thưởng</th><th class="amt">Halving</th><th class="amt">GD / block</th><th class="amt">Mục tiêu</th><th class="amt">Chỉnh độ khó</th><th class="amt">Độ khó</th></tr></thead>
+          <div class="table-wrap"><table class="compact"><thead><tr><th>Từ block</th><th class="amt">Thưởng</th><th class="amt">Halving</th><th class="amt">GD / block</th><th class="amt">Mục tiêu</th><th class="amt">Chỉnh độ khó</th><th class="amt">Độ khó</th><th class="amt">Điều kiện đào</th></tr></thead>
             <tbody>${versions}</tbody></table></div>
         </div>
       </div>
       <div class="card">
         <div class="card-head"><h3>Mempool (${pool.length})</h3><span class="hint">Quản trị viên xoá được mọi giao dịch đang chờ</span></div>
         ${poolHtml}
+      </div>
+      <div class="grid halves">
+        <form class="card" id="adm-fx" autocomplete="off" novalidate>
+          <div class="card-head"><h3>Tỷ giá đổi tiền</h3><span class="hint">Quầy đổi tiền: ${fmtAmt(bc.availableOf(bc.systemWallet('exchange').address))} dự trữ</span></div>
+          <div class="field-grid">
+            ${field('adm-vnd', '1 MC = ? VND', bc.fx.rates.VND, 'min="100" max="10000000"')}
+            ${field('adm-usd', '1 MC = ? USD', bc.fx.rates.USD, 'min="0.01" max="10000" step="any"')}
+            ${field('adm-spread', 'Chênh lệch mua–bán (%)', Math.round(bc.fx.spread * 10000) / 100, 'min="0" max="10" step="any"')}
+          </div>
+          <div class="form-error" id="adm-fx-error"></div>
+          <button class="btn btn-block" type="submit">Cập nhật tỷ giá</button>
+          <p class="note">Lệnh đổi tiền đã tạo giữ nguyên giá lúc đặt. Muốn tăng dự trữ của quầy hoặc quỹ tiết kiệm, dùng "+ Cấp MC" cho ví hệ thống.</p>
+        </form>
+        <div class="card">
+          <div class="card-head"><h3>Dịch vụ tiền tệ</h3></div>
+          <div class="kv"><span>Sản phẩm đang bán</span><b>${bc.products.filter((p) => p.active).length}</b></div>
+          <div class="kv"><span>Đơn hàng</span><b>${bc.orders.length}</b></div>
+          <div class="kv"><span>Hoá đơn (chưa trả / tổng)</span><b>${bc.invoices.filter((i) => i.status === 'open').length} / ${bc.invoices.length}</b></div>
+          <div class="kv"><span>Lệnh đổi tiền</span><b>${bc.fxOrders.length}</b></div>
+          <div class="kv"><span>Khoản tiết kiệm</span><b>${bc.stakes.length}</b></div>
+          <div class="kv"><span>Quỹ tiết kiệm</span><b>${fmtAmt(bc.availableOf(bc.systemWallet('staking').address))}</b></div>
+        </div>
       </div>
       <div class="grid halves">
         <form class="card" id="adm-pw" autocomplete="off">
@@ -1118,11 +1176,21 @@
         const r = bc.updateRules({
           initialReward: v('adm-reward'), halvingInterval: v('adm-halving'), maxTxPerBlock: v('adm-maxtx'),
           targetBlockMs: target === '' ? '' : Number(target) * 1000, adjustInterval: v('adm-adjust'),
-          minDifficulty: v('adm-dmin'), maxDifficulty: v('adm-dmax')
+          minDifficulty: v('adm-dmin'), maxDifficulty: v('adm-dmax'),
+          minTxToMine: v('adm-mintx'), minMinerBalance: v('adm-minbal'), maxConsecutiveBlocks: v('adm-maxrun')
         }, v('adm-diff'));
         done(r.changed.length ? 'Đã áp dụng luật mới từ block #' + r.from + '.' : 'Đã đổi độ khó hiện tại.');
       } catch (err) {
         $('#adm-rules-error').textContent = err.message;
+      }
+    });
+    $('#adm-fx').addEventListener('submit', (e) => {
+      e.preventDefault();
+      try {
+        bc.setFxRates($('#adm-vnd').value, $('#adm-usd').value, $('#adm-spread').value);
+        done('Đã cập nhật tỷ giá.');
+      } catch (err) {
+        $('#adm-fx-error').textContent = err.message;
       }
     });
     $('#adm-pw').addEventListener('submit', (e) => {
@@ -1149,6 +1217,8 @@
       ['Mempool & xác nhận', 'Giao dịch mới nằm chờ trong mempool. Mỗi block chỉ chứa tối đa ' + bc.rules.maxTxPerBlock + ' giao dịch, ưu tiên phí cao. Mỗi block xây thêm phía sau là thêm 1 xác nhận; từ 6 xác nhận coi như chắc chắn.'],
       ['Quản trị viên', 'Blockchain công khai thật không có quản trị viên. MiniChain thêm vai trò này để quản lý bản demo và mô phỏng chuỗi có cấp phép: khoá ví, cấp MC, đổi luật mạng (chỉ có hiệu lực từ block kế tiếp, giống một lần nâng cấp mạng).'],
       ['Đăng nhập ví', 'Mỗi ví có khoá bí mật; địa chỉ ví = SHA-256(khoá). Chỉ ai biết mật khẩu hoặc khoá bí mật mới gửi được MC hay nhận thưởng đào bằng ví đó.'],
+      ['Điều kiện đào block', 'Ngoài Proof-of-Work, mạng còn đặt điều kiện cho thợ đào: block phải có ít nhất ' + bc.rules.minTxToMine + ' giao dịch, thợ đào phải có ≥ ' + bc.rules.minMinerBalance + ' MC và không được đào quá ' + bc.rules.maxConsecutiveBlocks + ' block liên tiếp. Block vi phạm bị các nút từ chối.'],
+      ['Dùng MC: mua hàng, hoá đơn, đổi tiền, tiết kiệm', 'Mọi dịch vụ đều là giao dịch thật trên chuỗi: mua hàng chuyển MC cho người bán, hoá đơn kèm mã QR, quầy đổi tiền đổi MC ↔ VND/USD theo tỷ giá, quỹ tiết kiệm trả lãi khi đủ số block. Chỉ khi được đào vào block, đơn hàng / hoá đơn / lệnh đổi / khoản gửi mới được xác nhận.'],
       ['Ví MetaMask & chữ ký số', 'MetaMask giữ khoá bí mật của bạn. Khi gửi MC từ ví MetaMask, ứng dụng yêu cầu ký (personal_sign); chữ ký chứng minh chủ ví đã đồng ý mà không làm lộ khoá.']
     ];
     return `<div class="grid halves">
@@ -1168,6 +1238,8 @@
             <li>Vào <b>Đào block</b>, bấm đào → nhận phần thưởng + phí; giao dịch phí cao được chọn trước, số xác nhận tăng dần.</li>
             <li>Vào <b>Khám phá chuỗi</b>, bật chế độ thử sửa, đổi số tiền trong block #1 → block bị đánh dấu đỏ.</li>
             <li>Bấm <b>Đào lại block</b> → block #1 hợp lệ nhưng block #2 lại đứt liên kết. Muốn gian lận phải đào lại cả chuỗi.</li>
+            <li>Vào <b>Cửa hàng</b> mua một cuốn sách của Chi, vào <b>Thanh toán</b> tạo hoá đơn có mã QR, rồi đào block → đơn hàng và hoá đơn chuyển sang "Đã xác nhận".</li>
+            <li>Vào <b>Tiết kiệm</b> gửi 20 MC kỳ hạn 5 block, đào thêm vài block rồi tất toán để nhận gốc + lãi; vào <b>Đổi tiền</b> bán MC lấy VND.</li>
             <li>Vào <b>Ví MetaMask</b>, kết nối ví và bấm <b>Thêm vào MiniChain</b>, rồi gửi MC từ ví đó → MetaMask yêu cầu ký giao dịch.</li>
           </ol>
         </div>
@@ -1210,6 +1282,14 @@
     render();
   }
   $('#btn-reset').addEventListener('click', resetData);
+
+  // Đăng ký 4 màn hình dịch vụ tiền tệ (js/services.js)
+  if (window.ServicesUI) {
+    window.ServicesUI.install({
+      VIEWS: VIEWS, getBc: () => bc, save: save, render: render, toast: toast, go: go, esc: esc, ui: ui, me: me,
+      fmtAmt: fmtAmt, who: who, statCard: statCard, loginGate: loginGate, openModal: openModal, closeModal: closeModal
+    });
+  }
 
   // Đăng ký màn hình "Ví MetaMask" (js/metamask.js)
   if (window.MetaMaskUI) {
