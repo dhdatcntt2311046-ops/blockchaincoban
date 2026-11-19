@@ -90,13 +90,19 @@
   function go(view, opts) {
     ui.view = view;
     Object.assign(ui, opts || {});
-    $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
     render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   function render() {
+    if (!VIEWS[ui.view]) ui.view = 'dashboard';
     const v = VIEWS[ui.view];
+    $$('.nav-item').forEach((b) => {
+      const on = b.dataset.view === ui.view;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    });
     $('#page-title').textContent = v.title;
     $('#page-sub').textContent = v.sub;
     $('#view').innerHTML = v.render();
