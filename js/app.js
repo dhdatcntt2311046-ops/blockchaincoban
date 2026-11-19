@@ -5,8 +5,9 @@
 (function () {
   'use strict';
 
-  const { Blockchain, mineAsync, ZERO_HASH, SYSTEM } = window.MiniChain;
-  const STORE_KEY = 'minichain.v1';
+  const { Blockchain, mineAsync, ZERO_HASH, SYSTEM, DEMO_PASSWORD, RULES } = window.MiniChain;
+  const STORE_KEY = 'minichain.v2';          // v2: ví có mật khẩu + khoá bí mật
+  const SESSION_KEY = 'minichain.session';   // địa chỉ ví đang đăng nhập
 
   // ---------- Trạng thái ----------
   let bc = load() || Blockchain.create();
@@ -14,14 +15,12 @@
 
   const ui = {
     view: 'dashboard',
-    prefillFrom: '',
+    me: loadSession(),  // địa chỉ ví đang đăng nhập (null = chưa đăng nhập)
     tamper: false,
     query: '',
     focusBlock: null,
     mining: null,       // { block, stop, progress }
-    remining: null,     // chỉ số block đang được đào lại
-    difficulty: bc.difficulty,
-    miner: bc.wallets[0] ? bc.wallets[0].address : ''
+    remining: null      // chỉ số block đang được đào lại
   };
 
   function load() {
@@ -36,6 +35,33 @@
     try { localStorage.setItem(STORE_KEY, JSON.stringify(bc)); } catch (e) { /* bỏ qua */ }
   }
 
+  // ---------- Phiên đăng nhập ----------
+  function loadSession() {
+    try {
+      const a = localStorage.getItem(SESSION_KEY);
+      return a && bc.wallets.some((w) => w.address === a) ? a : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function me() {
+    return ui.me ? bc.wallets.find((w) => w.address === ui.me) || null : null;
+  }
+  function login(wallet, how) {
+    ui.me = wallet.address;
+    try { localStorage.setItem(SESSION_KEY, wallet.address); } catch (e) { /* bỏ qua */ }
+    closeModal();
+    toast('Đã đăng nhập ví "' + wallet.name + '"' + (how ? ' bằng ' + how : '') + '.', 'ok');
+    render();
+  }
+  function logout(silent) {
+    if (ui.mining) ui.mining.stop = true;
+    ui.me = null;
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* bỏ qua */ }
+    if (!silent) toast('Đã đăng xuất ví.');
+    render();
+  }
+
   // ---------- Tiện ích ----------
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
@@ -43,6 +69,7 @@
   const short = (h, a, b) => (h ? h.slice(0, a || 10) + '…' + h.slice(-(b || 6)) : '');
   const fmtAmt = (n) => Number(n).toLocaleString('vi-VN', { maximumFractionDigits: 4 }) + ' MC';
   const fmtNum = (n) => Number(n).toLocaleString('vi-VN');
+  const fmtMs = (ms) => (ms < 1000 ? Math.max(1, Math.round(ms)) + ' ms' : (ms / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 2 }) + ' giây');
   const fmtTime = (t) => new Date(t).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
   const hue = (address) => (address === SYSTEM ? 230 : parseInt(address.slice(2, 6), 16) % 360);
 
@@ -80,9 +107,9 @@
   // ---------- Điều hướng ----------
   const VIEWS = {
     dashboard: { title: 'Tổng quan', sub: 'Tình trạng chuỗi khối, số dư và hoạt động mới nhất.', render: renderDashboard },
-    wallets: { title: 'Ví', sub: 'Mỗi ví có một địa chỉ duy nhất được tạo từ hàm băm SHA-256.', render: renderWallets, bind: bindWallets },
-    transactions: { title: 'Giao dịch', sub: 'Tạo giao dịch mới – giao dịch nằm trong mempool cho tới khi được đào vào block.', render: renderTransactions, bind: bindTransactions },
-    mining: { title: 'Đào block', sub: 'Proof-of-Work: thử lần lượt các nonce cho tới khi hash đạt độ khó.', render: renderMining, bind: bindMining },
+    wallets: { title: 'Ví', sub: 'Mỗi ví có khoá bí mật riêng; địa chỉ ví được tính từ khoá bằng SHA-256.', render: renderWallets, bind: bindWallets },
+    transactions: { title: 'Giao dịch', sub: 'Gửi MC từ ví đang đăng nhập – giao dịch chờ trong mempool tới khi vào block.', render: renderTransactions, bind: bindTransactions },
+    mining: { title: 'Đào block', sub: 'Proof-of-Work: ví đang đăng nhập đào block và nhận phần thưởng.', render: renderMining, bind: bindMining },
     explorer: { title: 'Khám phá chuỗi', sub: 'Xem từng block, cách các block liên kết với nhau và thử sửa dữ liệu.', render: renderExplorer, bind: bindExplorer },
     guide: { title: 'Hướng dẫn', sub: 'Các khái niệm blockchain cơ bản được minh hoạ trong ứng dụng.', render: renderGuide, bind: bindGuide }
   };
@@ -118,7 +145,171 @@
     const badge = $('#badge-pending');
     badge.textContent = bc.pending.length;
     badge.classList.toggle('zero', bc.pending.length === 0);
-    $('#foot-reward').textContent = fmtAmt(bc.reward);
+    $('#foot-reward').textContent = fmtAmt(bc.nextReward());
+    const fd = $('#foot-diff');
+    if (fd) fd.textContent = bc.difficulty;
+
+    const acc = $('#btn-account');
+    const w = me();
+    if (acc) {
+      acc.classList.toggle('on', !!w);
+      acc.innerHTML = w ? `${avatar(w.address)}<span>${esc(w.name)}</span>` : '<span class="lock">🔒</span><span>Đăng nhập ví</span>';
+      acc.title = w ? 'Đang đăng nhập: ' + w.address : 'Đăng nhập vào ví để gửi giao dịch và đào block';
+    }
+  }
+
+  /** Thẻ yêu cầu đăng nhập, hiện ở các màn hình cần ví. */
+  function loginGate(what) {
+    return `<div class="card login-gate">
+      <div class="gate-icon">🔒</div>
+      <h3>Bạn chưa đăng nhập ví</h3>
+      <p class="muted">Hãy đăng nhập vào ví của bạn để ${what}. Chỉ chủ ví (biết mật khẩu hoặc khoá bí mật) mới dùng được ví.</p>
+      <div class="btn-row"><button class="btn" data-login="">Đăng nhập ví</button>
+        <button class="btn btn-ghost" data-go="wallets">Tạo ví mới</button></div>
+      <p class="note">Ví mẫu An, Bình, Chi, Dũng có mật khẩu <b class="mono">${DEMO_PASSWORD}</b>.</p>
+    </div>`;
+  }
+
+  /** Thẻ "ví của tôi" ở đầu màn hình Giao dịch / Đào block. */
+  function meCard(w) {
+    return `<div class="me-card">${avatar(w.address, true)}
+      <div class="me-info"><div class="me-label">Đang đăng nhập</div><b>${esc(w.name)}</b>${w.metamask ? ' <span class="chip accent">MetaMask</span>' : ''}
+        <div class="addr">${short(w.address, 10, 6)} <button class="copy" type="button" data-copy="${w.address}">Sao chép</button></div></div>
+      <div class="me-bal"><div class="me-label">Khả dụng</div><b>${fmtAmt(bc.availableOf(w.address))}</b></div>
+    </div>`;
+  }
+
+  // ---------- Hộp thoại (modal) ----------
+  const modal = { tab: 'password', prefill: '', created: null };
+
+  function openModal(html, bind) {
+    closeModal();
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.id = 'modal';
+    wrap.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`;
+    document.body.appendChild(wrap);
+    wrap.addEventListener('click', (e) => {
+      if (e.target === wrap || e.target.closest('[data-close]')) closeModal();
+    });
+    if (bind) bind(wrap);
+    const first = wrap.querySelector('input,textarea,button.btn');
+    if (first) first.focus();
+  }
+  function closeModal() {
+    const m = $('#modal');
+    if (m) m.remove();
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+  function openLogin(prefill, tab) {
+    modal.prefill = prefill || '';
+    if (tab) modal.tab = tab;
+    const t = modal.tab;
+    const tabBtn = (id, label) => `<button type="button" class="tab ${t === id ? 'active' : ''}" data-tab="${id}">${label}</button>`;
+    let body = '';
+    if (t === 'password') {
+      body = `<form id="lg-form" autocomplete="off">
+        <div class="field"><label for="lg-name">Tên ví hoặc địa chỉ ví</label>
+          <input class="input" id="lg-name" maxlength="64" placeholder="VD: An hoặc 0x…" value="${esc(modal.prefill)}"></div>
+        <div class="field"><label for="lg-pass">Mật khẩu</label>
+          <input class="input" id="lg-pass" type="password" placeholder="••••••"></div>
+        <div class="form-error" id="lg-error"></div>
+        <button class="btn btn-block" type="submit">Đăng nhập</button>
+        <p class="note">Ví mẫu: An, Bình, Chi, Dũng – mật khẩu <b class="mono">${DEMO_PASSWORD}</b>.</p>
+      </form>`;
+    } else if (t === 'key') {
+      body = `<form id="lg-form" autocomplete="off">
+        <div class="field"><label for="lg-key">Khoá bí mật (64 ký tự hex)</label>
+          <textarea class="input textarea mono" id="lg-key" rows="3" placeholder="Dán khoá bí mật được cấp khi tạo ví"></textarea>
+          <div class="help">MiniChain tính lại địa chỉ ví từ khoá bí mật rồi tìm ví khớp – khoá không bị lưu lại.</div></div>
+        <div class="form-error" id="lg-error"></div>
+        <button class="btn btn-block" type="submit">Đăng nhập bằng khoá bí mật</button>
+      </form>`;
+    } else {
+      body = `<div>
+        <p class="muted" style="margin-top:0">MetaMask sẽ yêu cầu bạn <b>ký một thông điệp đăng nhập</b> để chứng minh bạn là chủ địa chỉ. Ký thông điệp không tốn phí và không gửi tiền.</p>
+        <p class="muted">Nếu địa chỉ MetaMask chưa có trong MiniChain, ví sẽ được tự động thêm vào (số dư 0 MC).</p>
+        <div class="form-error" id="lg-error"></div>
+        <button class="btn btn-block" id="lg-mm" type="button">🦊 Đăng nhập bằng MetaMask</button>
+      </div>`;
+    }
+    openModal(`<div class="modal-head"><h3>Đăng nhập ví</h3><button class="icon-btn" data-close aria-label="Đóng">✕</button></div>
+      <div class="tabs">${tabBtn('password', 'Mật khẩu')}${tabBtn('key', 'Khoá bí mật')}${tabBtn('metamask', 'MetaMask')}</div>
+      ${body}
+      <p class="modal-foot">Chưa có ví? <button class="link" type="button" id="lg-new">Tạo ví mới</button></p>`, (root) => {
+      root.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => {
+        const nameEl = root.querySelector('#lg-name');
+        openLogin(nameEl ? nameEl.value : modal.prefill, b.dataset.tab);
+      }));
+      root.querySelector('#lg-new').addEventListener('click', () => { closeModal(); go('wallets'); setTimeout(() => { const n = $('#w-name'); if (n) n.focus(); }, 50); });
+      const err = (m) => { root.querySelector('#lg-error').textContent = m; };
+      const form = root.querySelector('#lg-form');
+      if (form) form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        try {
+          if (t === 'password') login(bc.loginWithPassword(root.querySelector('#lg-name').value, root.querySelector('#lg-pass').value), 'mật khẩu');
+          else login(bc.loginWithKey(root.querySelector('#lg-key').value), 'khoá bí mật');
+        } catch (ex) {
+          err(ex.message);
+        }
+      });
+      const mmBtn = root.querySelector('#lg-mm');
+      if (mmBtn) mmBtn.addEventListener('click', async () => {
+        if (!window.MetaMaskUI) return err('Không tải được mô-đun MetaMask.');
+        mmBtn.disabled = true;
+        mmBtn.innerHTML = '<span class="spinner"></span> Đang chờ MetaMask…';
+        try {
+          const w = await window.MetaMaskUI.login();
+          login(w, 'MetaMask');
+        } catch (ex) {
+          if (!$('#lg-mm')) return;
+          err(ex.message);
+          mmBtn.disabled = false;
+          mmBtn.textContent = '🦊 Đăng nhập bằng MetaMask';
+        }
+      });
+    });
+  }
+
+  function openAccount() {
+    const w = me();
+    if (!w) return openLogin();
+    openModal(`<div class="modal-head"><h3>Ví của tôi</h3><button class="icon-btn" data-close aria-label="Đóng">✕</button></div>
+      <div class="acc-top">${avatar(w.address, true)}<div><b>${esc(w.name)}</b>${w.metamask ? ' <span class="chip accent">MetaMask</span>' : ''}
+        <div class="addr mono">${esc(w.address)}</div></div></div>
+      <div class="kv"><span>Số dư</span><b>${fmtAmt(bc.balanceOf(w.address))}</b></div>
+      <div class="kv"><span>Khả dụng (trừ GD chờ)</span><b>${fmtAmt(bc.availableOf(w.address))}</b></div>
+      <div class="kv"><span>Cách xác thực</span><b>${w.metamask ? 'Chữ ký MetaMask' : 'Mật khẩu / khoá bí mật'}</b></div>
+      <div class="btn-row" style="margin-top:16px">
+        <button class="btn" type="button" data-close data-go="transactions">Gửi MC</button>
+        <button class="btn btn-ghost" type="button" data-close data-go="mining">Đào block</button>
+        <button class="btn btn-ghost" type="button" data-copy="${w.address}">Sao chép địa chỉ</button>
+        <button class="btn btn-danger" type="button" id="acc-logout">Đăng xuất</button>
+      </div>`, (root) => {
+      root.querySelector('#acc-logout').addEventListener('click', () => { closeModal(); logout(); });
+    });
+  }
+
+  /** Hiện khoá bí mật của ví vừa tạo – chỉ hiện đúng một lần. */
+  function openNewKey(made) {
+    openModal(`<div class="modal-head"><h3>Đã tạo ví "${esc(made.wallet.name)}"</h3></div>
+      <div class="banner warn"><div class="b-icon">!</div><div><b>Lưu lại khoá bí mật ngay bây giờ</b>
+        <p>Khoá chỉ hiện <b>một lần</b>. Ai có khoá này có thể đăng nhập ví mà không cần mật khẩu. MiniChain không lưu khoá.</p></div></div>
+      <div class="field"><label>Địa chỉ ví</label><div class="mm-addr">${esc(made.wallet.address)}</div></div>
+      <div class="field"><label>Khoá bí mật</label><div class="mm-addr key" id="nk-key">${esc(made.privateKey)}</div></div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" type="button" id="nk-copy">Sao chép khoá</button>
+        <button class="btn" type="button" id="nk-ok">Tôi đã lưu khoá – vào ví</button>
+      </div>`, (root) => {
+      root.querySelector('#nk-copy').addEventListener('click', () => {
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(made.privateKey).then(() => toast('Đã sao chép khoá bí mật.', 'ok'));
+      });
+      root.querySelector('#nk-ok').addEventListener('click', () => login(made.wallet));
+    });
+    // Bấm ra ngoài vẫn đăng nhập để không mất ví vừa tạo
+    const m = $('#modal');
+    m.addEventListener('click', (e) => { if (e.target === m && !ui.me) login(made.wallet); }, true);
   }
 
   // ---------- Thành phần dùng chung ----------
@@ -146,15 +337,21 @@
     opts = opts || {};
     if (!rows.length) return `<div class="empty">${opts.empty || 'Chưa có giao dịch.'}</div>`;
     return `<div class="table-wrap"><table>
-      <thead><tr><th>Mã GD</th>${opts.block ? '<th>Block</th>' : ''}<th>Từ</th><th>Đến</th><th>Ghi chú</th><th class="amt">Số tiền</th></tr></thead>
+      <thead><tr><th>Mã GD</th>${opts.block ? '<th>Block</th><th>Xác nhận</th>' : ''}<th>Từ</th><th>Đến</th><th>Ghi chú</th><th class="amt">Phí</th><th class="amt">Số tiền</th></tr></thead>
       <tbody>${rows.map((r) => `<tr>
         <td class="mono muted">${r.tx.id.slice(0, 8)}</td>
-        ${opts.block ? `<td><button class="link" data-block="${r.block}">#${r.block}</button></td>` : ''}
+        ${opts.block ? `<td><button class="link" data-block="${r.block}">#${r.block}</button></td><td>${confChip(bc.confirmationsOf(r.block))}</td>` : ''}
         <td>${who(r.tx.from)}</td>
         <td>${who(r.tx.to)}</td>
         <td class="muted">${esc(r.tx.note || '—')}${r.tx.signature ? ' <span class="chip ok" title="Đã ký bằng MetaMask">✍ Đã ký</span>' : ''}</td>
+        <td class="amt muted">${r.tx.from === SYSTEM ? '—' : fmtAmt(r.tx.fee || 0)}</td>
         <td class="amt">${fmtAmt(r.tx.amount)}</td>
       </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  /** Số xác nhận: ≥ 6 coi như chắc chắn (giống quy ước của Bitcoin). */
+  function confChip(n) {
+    return `<span class="chip ${n >= 6 ? 'ok' : n >= 2 ? 'accent' : 'warn'}" title="Số block đã xây trên block chứa giao dịch">${n}${n >= 6 ? '+ ✓' : ''}</span>`;
   }
 
   function confirmedTxs() {
@@ -163,9 +360,9 @@
     return rows.reverse();
   }
 
-  function walletOptions(selected, withBalance) {
-    return bc.wallets.map((w) => `<option value="${w.address}" ${w.address === selected ? 'selected' : ''}>
-      ${esc(w.name)}${withBalance ? ' — ' + fmtAmt(bc.availableOf(w.address)) : ''}</option>`).join('');
+  /** Danh sách ví nhận (không gồm ví của chính mình). */
+  function recipientOptions(exclude) {
+    return bc.wallets.filter((w) => w.address !== exclude).map((w) => `<option value="${w.address}">${esc(w.name)} · ${short(w.address, 6, 4)}</option>`).join('');
   }
 
   // ---------- Màn hình: Tổng quan ----------
@@ -230,8 +427,9 @@
         <div class="wallet-bal">${fmtNum(bal)} <small>MC</small></div>
         <div class="wallet-meta"><span>${txCount} giao dịch</span><span>${out ? 'Đang chờ gửi: −' + fmtAmt(out) : 'Không có GD chờ'}</span></div>
         <div class="actions">
-          <button class="btn btn-sm" data-send="${w.address}">Gửi tiền</button>
-          <button class="btn btn-sm btn-ghost" data-mine-as="${w.address}">Đào bằng ví này</button>
+          ${w.address === ui.me
+            ? '<span class="chip ok">● Đang đăng nhập</span><button class="btn btn-sm btn-ghost" data-logout>Đăng xuất</button>'
+            : `<button class="btn btn-sm btn-ghost" data-login="${esc(w.name)}" ${w.metamask ? 'data-login-tab="metamask"' : ''}>🔑 Đăng nhập</button>`}
         </div>
       </div>`;
     }).join('');
@@ -240,8 +438,10 @@
       ${cards}
       <form class="card new-wallet" id="form-wallet" autocomplete="off">
         <h3 style="margin-bottom:6px">Tạo ví mới</h3>
-        <p class="muted" style="margin:0 0 14px;font-size:13px">Địa chỉ ví được sinh ngẫu nhiên từ SHA-256. Ví mới có số dư 0 MC.</p>
+        <p class="muted" style="margin:0 0 14px;font-size:13px">MiniChain sinh khoá bí mật ngẫu nhiên, địa chỉ ví = SHA-256(khoá). Ví mới có số dư 0 MC.</p>
         <div class="field"><label for="w-name">Tên chủ ví</label><input class="input" id="w-name" maxlength="24" placeholder="VD: Minh"></div>
+        <div class="field"><label for="w-pass">Mật khẩu (ít nhất 6 ký tự)</label><input class="input" id="w-pass" type="password" autocomplete="new-password"></div>
+        <div class="field"><label for="w-pass2">Nhập lại mật khẩu</label><input class="input" id="w-pass2" type="password" autocomplete="new-password"></div>
         <div class="form-error" id="w-error"></div>
         <button class="btn btn-block" type="submit">+ Tạo ví</button>
       </form>
@@ -252,10 +452,10 @@
     $('#form-wallet').addEventListener('submit', (e) => {
       e.preventDefault();
       try {
-        const w = bc.addWallet($('#w-name').value);
+        const made = bc.addWallet($('#w-name').value, $('#w-pass').value, $('#w-pass2').value);
         save();
-        toast('Đã tạo ví "' + w.name + '".', 'ok');
         render();
+        openNewKey(made);
       } catch (err) {
         $('#w-error').textContent = err.message;
       }
@@ -264,29 +464,34 @@
 
   // ---------- Màn hình: Giao dịch ----------
   function renderTransactions() {
-    const from = ui.prefillFrom || (bc.wallets[0] && bc.wallets[0].address);
-    const to = (bc.wallets.find((w) => w.address !== from) || {}).address;
+    const w = me();
     const pool = bc.pending.length
       ? bc.pending.map((tx) => `<div class="pool-item">
           <div class="flow">${who(tx.from)}<span class="arrow">→</span>${who(tx.to)}</div>
-          <div class="amt">${fmtAmt(tx.amount)}</div>
+          <div class="amt">${fmtAmt(tx.amount)}<small class="fee">phí ${fmtAmt(tx.fee || 0)}</small></div>
           <div class="sub"><span class="mono">#${tx.id.slice(0, 8)}</span><span>${esc(tx.note || 'Không ghi chú')}</span>${tx.signature ? '<span class="chip ok">✍ Đã ký bằng MetaMask</span>' : ''}
-            <span>${fmtTime(tx.time)}</span><button class="remove" data-cancel="${tx.id}">Huỷ</button></div>
+            <span>${fmtTime(tx.time)}</span>${tx.from === ui.me ? `<button class="remove" data-cancel="${tx.id}">Huỷ</button>` : ''}</div>
         </div>`).join('')
       : '<div class="empty">Mempool trống. Hãy tạo giao dịch mới.</div>';
 
-    return `<div class="grid halves">
-      <form class="card" id="form-tx" autocomplete="off">
+    const form = !w ? loginGate('gửi MC') : `<form class="card" id="form-tx" autocomplete="off">
         <div class="card-head"><h3>Tạo giao dịch</h3><span class="hint">Giao dịch chỉ được xác nhận khi có block chứa nó</span></div>
-        <div class="field"><label for="tx-from">Ví gửi</label><select class="select" id="tx-from">${walletOptions(from, true)}</select>
-          <div class="help" id="tx-avail"></div></div>
-        <div class="field"><label for="tx-to">Ví nhận</label><select class="select" id="tx-to">${walletOptions(to)}</select></div>
+        <div class="field"><label>Ví gửi (ví của bạn)</label>${meCard(w)}</div>
+        <div class="field"><label for="tx-to">Ví nhận</label><select class="select" id="tx-to">${recipientOptions(w.address)}</select>
+          <div class="help">Hoặc dán địa chỉ ví nhận: <input class="input input-sm mono" id="tx-to-addr" placeholder="0x…" maxlength="42"></div></div>
         <div class="field"><label for="tx-amount">Số tiền (MC)</label><input class="input" id="tx-amount" type="number" min="0" step="any" placeholder="0">
           <div class="amount-chips"><button type="button" data-amt="5">5</button><button type="button" data-amt="10">10</button><button type="button" data-amt="25">25</button><button type="button" data-amt="max">Tối đa</button></div></div>
+        <div class="field"><label for="tx-fee">Phí giao dịch (MC) – trả cho thợ đào</label>
+          <input class="input" id="tx-fee" type="number" min="0" max="10" step="any" value="${RULES.defaultFee}">
+          <div class="amount-chips fee-chips"><button type="button" data-fee="0.01">Thấp · 0,01</button><button type="button" data-fee="0.1">Thường · 0,1</button><button type="button" data-fee="0.5">Nhanh · 0,5</button></div>
+          <div class="help">Mỗi block chỉ chứa tối đa ${RULES.maxTxPerBlock} giao dịch; thợ đào ưu tiên phí cao. Tổng trừ khỏi ví: <b id="tx-total">—</b></div></div>
         <div class="field"><label for="tx-note">Ghi chú</label><input class="input" id="tx-note" maxlength="60" placeholder="VD: Trả tiền ăn trưa"></div>
         <div class="form-error" id="tx-error"></div>
-        <button class="btn btn-block" type="submit">Gửi vào mempool</button>
-      </form>
+        <button class="btn btn-block" type="submit">${w.metamask ? 'Ký bằng MetaMask & gửi' : 'Gửi vào mempool'}</button>
+      </form>`;
+
+    return `<div class="grid halves">
+      ${form}
       <div class="card">
         <div class="card-head"><h3>Mempool (${bc.pending.length})</h3>
           ${bc.pending.length ? '<button class="btn btn-sm" data-go="mining">Đào block ngay</button>' : ''}</div>
@@ -300,27 +505,53 @@
   }
 
   function bindTransactions() {
-    const fromSel = $('#tx-from');
-    const showAvail = () => {
-      const a = fromSel.value;
-      $('#tx-avail').innerHTML = `Số dư: <b>${fmtAmt(bc.balanceOf(a))}</b> · Khả dụng: <b>${fmtAmt(bc.availableOf(a))}</b>`;
-    };
-    fromSel.addEventListener('change', showAvail);
-    showAvail();
-
-    $$('[data-amt]').forEach((b) => b.addEventListener('click', () => {
-      $('#tx-amount').value = b.dataset.amt === 'max' ? Math.max(0, bc.availableOf(fromSel.value)) : b.dataset.amt;
+    $$('[data-cancel]').forEach((b) => b.addEventListener('click', () => {
+      if (ui.mining && ui.mining.block.transactions.some((t) => t.id === b.dataset.cancel)) {
+        toast('Giao dịch đang được đào vào block – không thể huỷ.', 'bad');
+        return;
+      }
+      bc.pending = bc.pending.filter((tx) => !(tx.id === b.dataset.cancel && tx.from === ui.me));
+      save();
+      toast('Đã huỷ giao dịch.');
+      render();
     }));
 
-    $('#form-tx').addEventListener('submit', async (e) => {
+    const form = $('#form-tx');
+    if (!form) return;
+    const sender = ui.me;
+
+    const feeOf = () => { const f = Number($('#tx-fee').value); return isFinite(f) && f >= 0 ? f : 0; };
+    const showTotal = () => {
+      const a = Number($('#tx-amount').value) || 0;
+      $('#tx-total').textContent = fmtAmt(a + feeOf());
+    };
+    $$('[data-amt]').forEach((b) => b.addEventListener('click', () => {
+      $('#tx-amount').value = b.dataset.amt === 'max' ? Math.max(0, Math.floor((bc.availableOf(sender) - feeOf()) * 1e4) / 1e4) : b.dataset.amt;
+      showTotal();
+    }));
+    $$('[data-fee]').forEach((b) => b.addEventListener('click', () => { $('#tx-fee').value = b.dataset.fee; showTotal(); }));
+    $('#tx-amount').addEventListener('input', showTotal);
+    $('#tx-fee').addEventListener('input', showTotal);
+    showTotal();
+
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = $('#form-tx button[type=submit]');
       const chain = bc;
       let tx = null;
       try {
-        tx = chain.addTransaction(fromSel.value, $('#tx-to').value, $('#tx-amount').value, $('#tx-note').value);
-        const sender = chain.wallets.find((w) => w.address === tx.from);
-        if (sender && sender.metamask) {
+        if (!me() || ui.me !== sender) throw new Error('Phiên đăng nhập đã thay đổi – hãy thử lại.');
+        const typed = $('#tx-to-addr').value.trim().toLowerCase();
+        let to = $('#tx-to').value;
+        if (typed) {
+          const target = bc.wallets.find((x) => x.address.toLowerCase() === typed);
+          if (!target) throw new Error('Không tìm thấy ví có địa chỉ này trong MiniChain.');
+          to = target.address;
+        }
+        if (!to) throw new Error('Chưa có ví nhận – hãy tạo thêm ví.');
+        tx = chain.addTransaction(sender, to, $('#tx-amount').value, $('#tx-note').value, $('#tx-fee').value);
+        const fromWallet = chain.wallets.find((w) => w.address === tx.from);
+        if (fromWallet && fromWallet.metamask) {
           // Ví MetaMask: rút giao dịch khỏi mempool cho tới khi người dùng ký xong
           chain.pending = chain.pending.filter((t) => t !== tx);
           if (!window.MetaMaskUI) throw new Error('Không tải được mô-đun MetaMask.');
@@ -329,13 +560,12 @@
           btn.textContent = 'Đang chờ ký trong MetaMask…';
           const signed = await window.MetaMaskUI.signTransaction(tx);
           if (chain !== bc) throw new Error('Dữ liệu đã được đặt lại trong lúc ký.');
-          if (tx.amount > chain.availableOf(tx.from)) throw new Error('Số dư khả dụng không còn đủ.');
+          if (tx.amount + tx.fee > chain.availableOf(tx.from)) throw new Error('Số dư khả dụng không còn đủ.');
           tx.signature = signed.signature;
           tx.signedMessage = signed.message;
           chain.pending.push(tx);
         }
         save();
-        ui.prefillFrom = tx.from;
         toast(tx.signature ? 'Đã ký bằng MetaMask và thêm giao dịch vào mempool.' : 'Đã thêm giao dịch vào mempool.', 'ok');
         render();
       } catch (err) {
@@ -346,57 +576,92 @@
         if (errEl) errEl.textContent = err.message;
       }
     });
-
-    $$('[data-cancel]').forEach((b) => b.addEventListener('click', () => {
-      bc.pending = bc.pending.filter((tx) => tx.id !== b.dataset.cancel);
-      save();
-      toast('Đã huỷ giao dịch.');
-      render();
-    }));
   }
 
   // ---------- Màn hình: Đào block ----------
   function renderMining() {
     const m = ui.mining;
     const valid = bc.isValid();
-    const d = ui.difficulty;
+    const w = me();
+    const R = RULES;
+    const d = m ? m.block.difficulty : bc.difficulty;
     const p = m && m.progress;
     const target = '0'.repeat(d);
+    const expected = Math.pow(16, d);
 
+    // Block ứng viên: đang đào thì dùng block thật, chưa đào thì xem trước
+    const cand = m ? m.block : (w ? bc.createCandidate(w.address) : null);
+    const picked = bc.selectForBlock();
+    const pickedIds = new Set((m ? m.block.transactions : picked).map((t) => t.id));
+    const fees = picked.reduce((s, t) => s + Number(t.fee || 0), 0);
+    const reward = bc.nextReward();
+    const cb = cand ? cand.transactions[0] : null;
+
+    const row = (label, html, id) => `<div class="console-row"><span>${label}</span><b${id ? ` id="${id}"` : ''}>${html}</b></div>`;
+    const pct = p ? Math.min(100, p.hashes / expected * 100) : 0;
     const consoleHtml = `<div class="miner-console">
-      <div class="console-row"><span>Block</span><b>#${bc.latest.index + 1}</b></div>
-      <div class="console-row"><span>Hash trước</span><b>${short(bc.latest.hash, 16, 8)}</b></div>
-      <div class="console-row"><span>Mục tiêu</span><b><span class="hz-target">${target}</span>${'x'.repeat(Math.max(0, 12 - d))}…</b></div>
-      <div class="console-row"><span>Nonce</span><b id="m-nonce">${p ? fmtNum(p.nonce) : '—'}</b></div>
-      <div class="console-row"><span>Hash</span><b class="hash-big" id="m-hash">${p ? hashHtml(p.hash) : '—'}</b></div>
-      <div class="console-row"><span>Tốc độ</span><b id="m-rate">${p ? fmtNum(Math.round(p.hashes / Math.max(p.elapsed, 1) * 1000)) + ' H/s' : '—'}</b></div>
-      <div class="console-row"><span>Thời gian</span><b id="m-time">${p ? (p.elapsed / 1000).toFixed(2) + ' giây' : '—'}</b></div>
+      <div class="console-title">Tiêu đề block #${bc.latest.index + 1}</div>
+      ${row('Hash trước', short(bc.latest.hash, 16, 8))}
+      ${row('Merkle root', cand ? short(cand.merkleRoot, 16, 8) : '—')}
+      ${row('Thời gian', cand ? fmtTime(cand.timestamp) : '—')}
+      ${row('Độ khó', `${d} · mục tiêu <span class="hz-target">${target}</span>${'x'.repeat(Math.max(0, 12 - d))}…`)}
+      ${row('Nonce', p ? fmtNum(p.nonce) : '—', 'm-nonce')}
+      ${row('Hash', p ? hashHtml(p.hash) : '—', 'm-hash')}
+      <div class="console-title">Hiệu suất</div>
+      ${row('Tốc độ băm', p ? fmtNum(Math.round(p.hashes / Math.max(p.elapsed, 1) * 1000)) + ' H/s' : '—', 'm-rate')}
+      ${row('Thời gian đào', p ? (p.elapsed / 1000).toFixed(2) + ' giây' : '—', 'm-time')}
+      ${row('Số lần thử / kỳ vọng', `<span id="m-tries">${p ? fmtNum(p.hashes) : 0}</span> / ~${fmtNum(expected)}`)}
+      <div class="progress"><i id="m-bar" style="width:${pct}%"></i></div>
+      <div class="help" style="margin-top:6px">Mỗi lần thử có xác suất 1/${fmtNum(expected)} trúng. Có thể may mắn tìm ra sớm, hoặc phải thử nhiều hơn kỳ vọng.</div>
+      <div class="hash-log" id="m-log">${(m && m.log || []).map((h) => `<div>${hashHtml(h)}</div>`).join('')}</div>
     </div>`;
 
-    const pool = bc.pending.length
-      ? bc.pending.map((tx) => `<div class="pool-item">
-          <div class="flow">${who(tx.from)}<span class="arrow">→</span>${who(tx.to)}</div>
-          <div class="amt">${fmtAmt(tx.amount)}</div></div>`).join('')
-      : '<div class="empty">Không có giao dịch chờ – block mới chỉ chứa phần thưởng cho thợ đào.</div>';
+    const sorted = bc.sortedPending();
+    const pool = sorted.length
+      ? `<div class="table-wrap"><table>
+          <thead><tr><th>#</th><th>Từ</th><th>Đến</th><th class="amt">Số tiền</th><th class="amt">Phí</th><th>Trạng thái</th></tr></thead>
+          <tbody>${sorted.map((tx, i) => `<tr>
+            <td class="muted">${i + 1}</td><td>${who(tx.from)}</td><td>${who(tx.to)}</td>
+            <td class="amt">${fmtAmt(tx.amount)}</td><td class="amt">${fmtAmt(tx.fee || 0)}</td>
+            <td>${pickedIds.has(tx.id) ? '<span class="chip ok">Vào block này</span>' : '<span class="chip warn">Chờ block sau</span>'}</td></tr>`).join('')}</tbody></table></div>`
+      : '<div class="empty">Mempool trống – block mới chỉ chứa giao dịch coinbase (phần thưởng).</div>';
+
+    const history = bc.chain.slice(1).reverse().slice(0, 8);
+    const historyHtml = history.length
+      ? `<div class="table-wrap"><table>
+          <thead><tr><th>Block</th><th>Thợ đào</th><th>Độ khó</th><th class="amt">Lần thử</th><th class="amt">Thời gian đào</th><th class="amt">Thưởng + phí</th></tr></thead>
+          <tbody>${history.map((b) => {
+            const c = b.transactions[0] || {};
+            return `<tr><td><button class="link" data-block="${b.index}">#${b.index}</button></td><td>${who(b.miner)}</td>
+              <td>${b.difficulty}</td><td class="amt">${b.hashes ? fmtNum(b.hashes) : fmtNum(b.nonce + 1)}</td>
+              <td class="amt">${b.minedIn !== undefined && b.index > 1 ? fmtMs(b.minedIn) : '—'}</td>
+              <td class="amt">${c.reward !== undefined ? fmtAmt(c.reward) + (c.fees ? ' + ' + fmtAmt(c.fees) : '') : fmtAmt(c.amount || 0)}</td></tr>`;
+          }).join('')}</tbody></table></div>`
+      : '<div class="empty">Chưa có block nào được đào.</div>';
+
+    const minerHtml = w ? meCard(w)
+      : `<div class="me-card empty-me"><span>🔒 Chưa đăng nhập ví</span><button class="btn btn-sm" data-login="">Đăng nhập</button></div>`;
 
     return `${valid ? '' : `<div class="banner bad"><div class="b-icon">!</div>
-        <div><b>Không thể đào khi chuỗi không hợp lệ</b><p>Hãy vào "Khám phá chuỗi" để đào lại các block bị sửa, hoặc đặt lại dữ liệu.</p></div>
+        <div><b>Không thể đào khi chuỗi không hợp lệ</b><p>Các nút trong mạng sẽ từ chối block nối vào một chuỗi sai. Hãy vào "Khám phá chuỗi" để đào lại các block bị sửa, hoặc đặt lại dữ liệu.</p></div>
         <button class="btn btn-sm btn-danger" data-go="explorer">Sửa chuỗi</button></div>`}
       <div class="grid halves">
         <div class="card">
-          <div class="card-head"><h3>Cấu hình</h3><span class="chip accent">Proof-of-Work</span></div>
-          <div class="field"><label for="m-miner">Thợ đào nhận thưởng</label>
-            <select class="select" id="m-miner" ${m ? 'disabled' : ''}>${walletOptions(ui.miner)}</select></div>
-          <div class="field"><label for="m-diff">Độ khó: <b id="m-diff-label">${d}</b> số 0 ở đầu hash</label>
-            <input type="range" id="m-diff" min="1" max="5" value="${d}" ${m ? 'disabled' : ''}>
-            <div class="diff-scale"><span>1 · rất dễ</span><span>3</span><span>5 · khó</span></div>
-            <div class="help" id="m-est">Trung bình cần khoảng <b>${fmtNum(Math.pow(16, d))}</b> lần thử.</div></div>
-          <div class="kv"><span>Phần thưởng</span><b>${fmtAmt(bc.reward)}</b></div>
-          <div class="kv"><span>Giao dịch sẽ đưa vào block</span><b>${bc.pending.length}</b></div>
+          <div class="card-head"><h3>Thông số mạng</h3><span class="chip accent">Proof-of-Work</span></div>
+          <div class="field"><label>Thợ đào (ví đang đăng nhập)</label>${minerHtml}</div>
+          <div class="kv"><span>Độ khó mạng</span><b>${d} số 0 ở đầu hash</b></div>
+          <div class="kv"><span>Điều chỉnh độ khó</span><b>sau ${bc.blocksToRetarget()} block nữa</b></div>
+          <div class="kv"><span>Thời gian mục tiêu</span><b>~${R.targetBlockMs / 1000} giây / block</b></div>
+          <div class="kv"><span>Phần thưởng block</span><b>${fmtAmt(reward)}</b></div>
+          <div class="kv"><span>Halving (thưởng giảm ½)</span><b>sau ${bc.blocksToHalving()} block nữa</b></div>
+          <div class="kv"><span>Phí giao dịch thu được</span><b>${fmtAmt(m && cb ? cb.fees : fees)}</b></div>
+          <div class="kv total"><span>Tổng nhận nếu đào được</span><b>${fmtAmt(m && cb ? cb.amount : reward + fees)}</b></div>
+          <div class="kv"><span>Giao dịch đưa vào block</span><b>${m ? m.block.transactions.length - 1 : picked.length} / tối đa ${R.maxTxPerBlock}</b></div>
           <div style="margin-top:14px">
             ${m ? '<button class="btn btn-block btn-danger" id="m-stop">Dừng đào</button>'
-              : `<button class="btn btn-block" id="m-start" ${valid ? '' : 'disabled'}>⛏ Bắt đầu đào block #${bc.latest.index + 1}</button>`}
+              : `<button class="btn btn-block" id="m-start" ${valid && w ? '' : 'disabled'}>⛏ ${w ? 'Bắt đầu đào block #' + (bc.latest.index + 1) : 'Đăng nhập ví để đào'}</button>`}
           </div>
+          <p class="note">Độ khó do mạng quyết định, không do thợ đào tự chọn: cứ ${R.adjustInterval} block, nếu thời gian đào trung bình nhanh hơn ${fmtMs(R.targetBlockMs / 2)} thì độ khó tăng, chậm hơn ${fmtMs(R.targetBlockMs * 2)} thì giảm (trong khoảng ${R.minDifficulty}–${R.maxDifficulty}).</p>
         </div>
         <div class="card">
           <div class="mining-state">${m ? '<div class="spinner"></div><b>Đang tìm nonce hợp lệ…</b>' : '<b>Bảng điều khiển thợ đào</b>'}</div>
@@ -404,24 +669,16 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-head"><h3>Giao dịch chờ đưa vào block</h3><span class="hint">+1 giao dịch phần thưởng</span></div>
-        <div class="pool">${pool}</div>
+        <div class="card-head"><h3>Mempool – xếp theo phí</h3><span class="hint">Thợ đào chọn tối đa ${R.maxTxPerBlock} giao dịch trả phí cao nhất</span></div>
+        ${pool}
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Lịch sử đào gần đây</h3><span class="hint">Thời gian đào giúp mạng điều chỉnh độ khó</span></div>
+        ${historyHtml}
       </div>`;
   }
 
   function bindMining() {
-    const diff = $('#m-diff');
-    if (diff) {
-      diff.addEventListener('input', () => {
-        ui.difficulty = Number(diff.value);
-        $('#m-diff-label').textContent = diff.value;
-        $('#m-est').innerHTML = `Trung bình cần khoảng <b>${fmtNum(Math.pow(16, ui.difficulty))}</b> lần thử.`;
-      });
-      diff.addEventListener('change', render);
-    }
-    const minerSel = $('#m-miner');
-    if (minerSel) minerSel.addEventListener('change', () => { ui.miner = minerSel.value; });
-
     const start = $('#m-start');
     if (start) start.addEventListener('click', startMining);
     const stop = $('#m-stop');
@@ -430,21 +687,29 @@
 
   function startMining() {
     if (ui.mining || !bc.isValid()) return;
-    const block = bc.createCandidate(ui.miner, ui.difficulty);
-    const job = { block: block, stop: false, progress: null };
+    if (!me()) { openLogin(); return; }
+    const block = bc.createCandidate(ui.me);
+    const job = { block: block, stop: false, progress: null, log: [] };
     ui.mining = job;
     render();
 
+    const expected = Math.pow(16, block.difficulty);
     mineAsync(block, {
       shouldStop: () => job.stop,
       onProgress: (p) => {
         job.progress = p;
+        job.log.unshift(p.hash);
+        job.log = job.log.slice(0, 6);
         if (ui.view !== 'mining') return;
         const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
         set('m-nonce', fmtNum(p.nonce));
         set('m-hash', hashHtml(p.hash));
         set('m-rate', fmtNum(Math.round(p.hashes / Math.max(p.elapsed, 1) * 1000)) + ' H/s');
         set('m-time', (p.elapsed / 1000).toFixed(2) + ' giây');
+        set('m-tries', fmtNum(p.hashes));
+        set('m-log', job.log.map((h) => `<div>${hashHtml(h)}</div>`).join(''));
+        const bar = document.getElementById('m-bar');
+        if (bar) bar.style.width = Math.min(100, p.hashes / expected * 100) + '%';
       }
     }).then((result) => {
       ui.mining = null;
@@ -452,9 +717,16 @@
         toast('Đã dừng đào block.');
       } else {
         try {
-          bc.commitBlock(result);
+          const cb = result.transactions[0];
+          const adj = bc.commitBlock(result);
           save();
-          toast(`Đào thành công block #${result.index} sau ${fmtNum(result.nonce + 1)} lần thử! +${bc.reward} MC cho ${bc.nameOf(result.miner)}.`, 'ok');
+          toast(`Đào thành công block #${result.index} sau ${fmtNum(result.hashes)} lần thử (${fmtMs(result.minedIn)})! +${fmtAmt(cb.amount)} cho ${bc.nameOf(result.miner)}.`, 'ok');
+          if (adj && adj.to !== adj.from) {
+            toast(`Mạng điều chỉnh độ khó ${adj.from} → ${adj.to} (trung bình ${fmtMs(adj.avg)}/block).`, '');
+          }
+          if (result.index % RULES.halvingInterval === RULES.halvingInterval - 1) {
+            toast(`Halving! Phần thưởng block giảm còn ${fmtAmt(bc.reward)}.`, '');
+          }
           ui.focusBlock = result.index;
         } catch (err) {
           toast(err.message, 'bad');
@@ -479,6 +751,7 @@
         <td class="mono muted">${tx.id.slice(0, 8)}</td>
         <td>${who(tx.from)}</td><td>${who(tx.to)}</td>
         <td class="muted">${esc(tx.note || '—')}${tx.signature ? ' <span class="chip ok" title="Đã ký bằng MetaMask">✍ Đã ký</span>' : ''}</td>
+        <td class="amt muted">${tx.from === SYSTEM ? '—' : fmtAmt(tx.fee || 0)}</td>
         <td class="amt">${ui.tamper
           ? `<input class="tamper-input" type="number" step="any" value="${tx.amount}" data-tamper="${b.index}:${ti}">`
           : fmtAmt(tx.amount)}</td></tr>`).join('');
@@ -488,12 +761,14 @@
       <div class="block-head">
         <div class="block-num">#${b.index}</div>
         <div class="grow"><h3>${b.index === 0 ? 'Block khởi tạo (Genesis)' : 'Block #' + b.index}</h3>
-          <div class="muted" style="font-size:12.5px">${fmtTime(b.timestamp)} · đào bởi ${esc(bc.nameOf(b.miner))}</div></div>
+          <div class="muted" style="font-size:12.5px">${fmtTime(b.timestamp)} · đào bởi ${esc(bc.nameOf(b.miner))}${b.minedIn !== undefined && b.index > 1 ? ' trong ' + fmtMs(b.minedIn) : ''} · ${bc.confirmationsOf(b.index)} xác nhận</div></div>
         <span class="chip ${st.valid ? 'ok' : 'bad'}">${st.valid ? '✓ Hợp lệ' : '✕ Không hợp lệ'}</span>
       </div>
       <div class="block-fields">
         <div class="bf wide"><label>Hash lưu trong block</label><div class="val">${hashHtml(b.hash)}</div></div>
         ${st.dataOk ? '' : `<div class="bf wide"><label>Hash tính lại từ dữ liệu hiện tại</label><div class="val bad">${st.recomputed}</div></div>`}
+        <div class="bf wide"><label>Merkle root (tóm tắt ${b.transactions.length} giao dịch)</label><div class="val ${st.merkleOk ? '' : 'bad'}">${esc(b.merkleRoot || '')}</div></div>
+        ${st.merkleOk ? '' : `<div class="bf wide"><label>Merkle root tính lại từ giao dịch hiện tại</label><div class="val bad">${st.merkle}</div></div>`}
         <div class="bf wide"><label>Hash của block trước (previousHash)</label><div class="val ${st.linkOk ? '' : 'bad'}">${b.previousHash}</div></div>
         <div class="bf"><label>Nonce</label><div class="val">${fmtNum(b.nonce)}</div></div>
         <div class="bf"><label>Độ khó</label><div class="val">${b.difficulty} (${'0'.repeat(b.difficulty)}…)</div></div>
@@ -502,7 +777,7 @@
         <div class="block-actions"><button class="btn btn-sm btn-ok" data-remine="${b.index}" ${ui.remining !== null ? 'disabled' : ''}>
           ${busy ? '<span class="spinner"></span> Đang đào lại…' : '⛏ Đào lại block này'}</button></div>`}
       <div class="block-txs table-wrap"><table>
-        <thead><tr><th>Mã GD</th><th>Từ</th><th>Đến</th><th>Ghi chú</th><th class="amt">Số tiền</th></tr></thead>
+        <thead><tr><th>Mã GD</th><th>Từ</th><th>Đến</th><th>Ghi chú</th><th class="amt">Phí</th><th class="amt">Số tiền</th></tr></thead>
         <tbody>${txRows}</tbody></table></div>
     </div>`;
   }
@@ -547,7 +822,9 @@
       const data = JSON.stringify({
         exportedAt: new Date().toISOString(),
         valid: bc.isValid(),
-        reward: bc.reward,
+        rules: RULES,
+        difficulty: bc.difficulty,
+        nextReward: bc.nextReward(),
         wallets: bc.wallets,
         chain: bc.chain,
         pending: bc.pending
@@ -611,10 +888,13 @@
   function renderGuide() {
     const concepts = [
       ['Hàm băm (Hash)', 'SHA-256 biến dữ liệu bất kỳ thành chuỗi 64 ký tự. Chỉ cần đổi 1 ký tự đầu vào, hash thay đổi hoàn toàn.'],
-      ['Block', 'Mỗi block chứa: số thứ tự, thời gian, danh sách giao dịch, hash của block trước, nonce và hash của chính nó.'],
-      ['Proof-of-Work', 'Thợ đào thử lần lượt nonce = 0, 1, 2… cho tới khi hash bắt đầu bằng đủ số chữ 0 (độ khó). Người tìm ra được thưởng ' + bc.reward + ' MC.'],
+      ['Block & Merkle root', 'Tiêu đề block gồm: số thứ tự, hash block trước, thời gian, Merkle root, độ khó và nonce. Merkle root là hash tóm tắt mọi giao dịch – sửa 1 giao dịch là Merkle root đổi.'],
+      ['Proof-of-Work', 'Thợ đào thử lần lượt nonce = 0, 1, 2… cho tới khi hash tiêu đề bắt đầu bằng đủ số chữ 0. Với độ khó d, trung bình cần 16^d lần thử.'],
+      ['Phần thưởng, phí & halving', 'Giao dịch đầu tiên của block (coinbase) trả cho thợ đào phần thưởng + tổng phí. Phần thưởng giảm một nửa sau mỗi ' + RULES.halvingInterval + ' block (hiện tại ' + bc.nextReward() + ' MC).'],
+      ['Độ khó tự điều chỉnh', 'Cứ ' + RULES.adjustInterval + ' block, mạng so thời gian đào trung bình với mục tiêu ~' + RULES.targetBlockMs / 1000 + ' giây: đào quá nhanh thì tăng độ khó, quá chậm thì giảm.'],
       ['Chuỗi liên kết', 'Block sau lưu hash của block trước. Sửa một block làm hash của nó đổi, khiến mọi block phía sau mất liên kết – đó là tính bất biến.'],
-      ['Mempool', 'Giao dịch mới chưa được xác nhận mà nằm chờ trong mempool. Khi thợ đào tìm được block, các giao dịch này được đưa vào block và trở thành không thể sửa.'],
+      ['Mempool & xác nhận', 'Giao dịch mới nằm chờ trong mempool. Mỗi block chỉ chứa tối đa ' + RULES.maxTxPerBlock + ' giao dịch, ưu tiên phí cao. Mỗi block xây thêm phía sau là thêm 1 xác nhận; từ 6 xác nhận coi như chắc chắn.'],
+      ['Đăng nhập ví', 'Mỗi ví có khoá bí mật; địa chỉ ví = SHA-256(khoá). Chỉ ai biết mật khẩu hoặc khoá bí mật mới gửi được MC hay nhận thưởng đào bằng ví đó.'],
       ['Ví MetaMask & chữ ký số', 'MetaMask giữ khoá bí mật của bạn. Khi gửi MC từ ví MetaMask, ứng dụng yêu cầu ký (personal_sign); chữ ký chứng minh chủ ví đã đồng ý mà không làm lộ khoá.']
     ];
     return `<div class="grid halves">
@@ -629,8 +909,9 @@
         <div class="card">
           <div class="card-head"><h3>Kịch bản demo</h3></div>
           <ol class="steps">
-            <li>Vào <b>Giao dịch</b>, gửi 10 MC từ An sang Bình → giao dịch nằm trong mempool.</li>
-            <li>Vào <b>Đào block</b>, chọn độ khó 3–4 và bấm đào → giao dịch được xác nhận, thợ đào nhận thưởng.</li>
+            <li>Bấm <b>Đăng nhập ví</b>, đăng nhập ví An (mật khẩu <b class="mono">${DEMO_PASSWORD}</b>).</li>
+            <li>Vào <b>Giao dịch</b>, gửi 10 MC sang Bình với phí 0,5 → giao dịch nằm trong mempool.</li>
+            <li>Vào <b>Đào block</b>, bấm đào → nhận phần thưởng + phí; giao dịch phí cao được chọn trước, số xác nhận tăng dần.</li>
             <li>Vào <b>Khám phá chuỗi</b>, bật chế độ thử sửa, đổi số tiền trong block #1 → block bị đánh dấu đỏ.</li>
             <li>Bấm <b>Đào lại block</b> → block #1 hợp lệ nhưng block #2 lại đứt liên kết. Muốn gian lận phải đào lại cả chuỗi.</li>
             <li>Vào <b>Ví MetaMask</b>, kết nối ví và bấm <b>Thêm vào MiniChain</b>, rồi gửi MC từ ví đó → MetaMask yêu cầu ký giao dịch.</li>
@@ -647,32 +928,44 @@
   // ---------- Sự kiện toàn cục ----------
   $('#nav').addEventListener('click', (e) => {
     const b = e.target.closest('.nav-item');
-    if (b) go(b.dataset.view, { prefillFrom: '' });
+    if (b) go(b.dataset.view);
   });
 
   document.addEventListener('click', (e) => {
-    const t = e.target.closest('[data-go],[data-block],[data-copy],[data-send],[data-mine-as]');
+    const t = e.target.closest('[data-go],[data-block],[data-copy],[data-login],[data-logout]');
     if (!t) return;
-    if (t.dataset.go) go(t.dataset.go);
+    if (t.dataset.go) { if (t.hasAttribute('data-close')) closeModal(); go(t.dataset.go); }
     else if (t.dataset.block !== undefined) go('explorer', { focusBlock: Number(t.dataset.block), query: '' });
     else if (t.dataset.copy) copy(t.dataset.copy);
-    else if (t.dataset.send) go('transactions', { prefillFrom: t.dataset.send });
-    else if (t.dataset.mineAs) go('mining', { miner: t.dataset.mineAs });
+    else if (t.dataset.login !== undefined) openLogin(t.dataset.login, t.dataset.loginTab || 'password');
+    else if (t.hasAttribute('data-logout')) logout();
   });
+
+  $('#btn-account').addEventListener('click', () => (ui.me ? openAccount() : openLogin()));
 
   $('#btn-reset').addEventListener('click', () => {
     if (!window.confirm('Xoá toàn bộ dữ liệu và tạo lại chuỗi mẫu?')) return;
     if (ui.mining) ui.mining.stop = true;
     bc = Blockchain.create();
     save();
-    Object.assign(ui, { mining: null, remining: null, tamper: false, query: '', difficulty: bc.difficulty, miner: bc.wallets[0].address });
+    ui.me = null;
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* bỏ qua */ }
+    Object.assign(ui, { mining: null, remining: null, tamper: false, query: '' });
     toast('Đã đặt lại dữ liệu mẫu.', 'ok');
     go('dashboard');
   });
 
   // Đăng ký màn hình "Ví MetaMask" (js/metamask.js)
   if (window.MetaMaskUI) {
-    window.MetaMaskUI.install({ VIEWS: VIEWS, getBc: () => bc, save: save, render: render, toast: toast, go: go, esc: esc, fmtNum: fmtNum, ui: ui });
+    window.MetaMaskUI.install({
+      VIEWS: VIEWS, getBc: () => bc, save: save, render: render, toast: toast, go: go, esc: esc, fmtNum: fmtNum, ui: ui,
+      login: (w) => login(w, 'MetaMask'),
+      // Đổi tài khoản trong MetaMask => đăng xuất ví MetaMask đang dùng
+      onAccountChanged: (account) => {
+        const w = me();
+        if (w && w.metamask && w.address !== account) { logout(true); toast('Tài khoản MetaMask đã thay đổi – đã đăng xuất ví.', 'bad'); }
+      }
+    });
   }
 
   render();
