@@ -92,6 +92,7 @@
         remember(false);
         log('MetaMask đã ngắt kết nối.', 'bad');
       }
+      if (api && api.onAccountChanged) api.onAccountChanged(a);
       update();
     });
     state.provider.on('chainChanged', function (chainId) {
@@ -257,6 +258,34 @@
     return w;
   }
 
+  /**
+   * Đăng nhập MiniChain bằng MetaMask: kết nối (nếu chưa), ký thông điệp đăng nhập để chứng minh
+   * quyền sở hữu địa chỉ, tự thêm ví vào MiniChain nếu chưa có. Trả về ví MiniChain tương ứng.
+   */
+  async function loginWithMetaMask() {
+    if (!ensureProvider()) throw new Error('Không tìm thấy MetaMask. Hãy cài tiện ích MetaMask cho trình duyệt rồi tải lại trang.');
+    if (!state.account) await connect();
+    if (!state.account) throw new Error('Chưa chọn tài khoản MetaMask.');
+    const message = [
+      'MiniChain – Đăng nhập ví',
+      'Địa chỉ: ' + state.account,
+      'Thời gian: ' + new Date().toLocaleString('vi-VN'),
+      'Mã: ' + Math.random().toString(36).slice(2, 10),
+      'Ký thông điệp này không tốn phí và không gửi tiền.'
+    ].join('\n');
+    const account = state.account;
+    await signMessage(message);
+    if (state.account !== account) throw new Error('Tài khoản MetaMask đã thay đổi trong lúc ký – hãy thử lại.');
+    let w = linkedWallet();
+    if (!w) {
+      w = linkToMiniChain();
+      log('Đã thêm ví "' + w.name + '" vào MiniChain', 'ok');
+    }
+    log('Đăng nhập MiniChain bằng ' + short(account), 'ok');
+    update();
+    return w;
+  }
+
   /** Gọi từ app.js: ký một giao dịch MiniChain gửi từ ví MetaMask. */
   async function signTransaction(tx) {
     const from = String(tx.from).toLowerCase();
@@ -268,6 +297,7 @@
       'Từ: ' + tx.from,
       'Đến: ' + tx.to + ' (' + bc.nameOf(tx.to) + ')',
       'Số tiền: ' + tx.amount + ' MC',
+      'Phí: ' + (tx.fee || 0) + ' MC',
       'Ghi chú: ' + (tx.note || '—'),
       'Mã giao dịch: ' + tx.id
     ].join('\n');
@@ -356,10 +386,13 @@
       ? `<p class="muted" style="margin:0">Địa chỉ MetaMask đang là ví <b>${esc(linked.name)}</b> trong MiniChain.</p>
         <div class="mm-bal">${api.fmtNum(bc.balanceOf(linked.address))} <small>MC</small></div>
         <p class="note">Mỗi giao dịch gửi MC từ ví này phải được ký bằng MetaMask. Chữ ký được lưu kèm giao dịch trong block.</p>
-        <div class="btn-row"><button class="btn btn-sm" data-send="${linked.address}">Gửi MC từ ví này</button>
-          <button class="btn btn-sm btn-ghost" data-mine-as="${linked.address}">Đào bằng ví này</button></div>`
+        ${api.ui.me === linked.address
+          ? `<div class="btn-row"><span class="chip ok">● Đang đăng nhập bằng ví này</span>
+              <button class="btn btn-sm" data-go="transactions">Gửi MC</button>
+              <button class="btn btn-sm btn-ghost" data-go="mining">Đào block</button></div>`
+          : '<div class="btn-row"><button class="btn btn-sm" id="mm-login">🔑 Đăng nhập MiniChain bằng ví này</button></div>'}`
       : `<p class="muted" style="margin:0 0 14px">Thêm địa chỉ MetaMask thành một ví trong MiniChain. Ví mới có 0 MC – hãy đào block bằng ví này hoặc nhận MC từ ví khác.</p>
-        <button class="btn" id="mm-link">+ Thêm vào MiniChain</button>`;
+        <button class="btn" id="mm-link">+ Thêm vào MiniChain & đăng nhập</button>`;
 
     const sendCard = testnet
       ? `<div class="field"><label for="mm-to">Địa chỉ nhận</label><input class="input mono" id="mm-to" placeholder="0x…" value="${esc(state.sendTo)}"></div>
@@ -440,10 +473,15 @@
     on('mm-disconnect', function () { run(disconnect); });
     on('mm-link', function () {
       run(async function () {
-        const w = linkToMiniChain();
-        log('Đã thêm ví "' + w.name + '" vào MiniChain', 'ok');
-        update();
-      }, 'Đã liên kết ví MetaMask với MiniChain.');
+        const w = await loginWithMetaMask();
+        api.login(w);
+      });
+    });
+    on('mm-login', function () {
+      run(async function () {
+        const w = await loginWithMetaMask();
+        api.login(w);
+      });
     });
 
     const msg = document.getElementById('mm-msg');
@@ -515,6 +553,13 @@
 
   global.MetaMaskUI = {
     install: install,
+    login: async function () {
+      try {
+        return await loginWithMetaMask();
+      } catch (e) {
+        throw new Error(errMsg(e));
+      }
+    },
     signTransaction: async function (tx) {
       try {
         return await signTransaction(tx);
