@@ -613,7 +613,9 @@
       ['Hàm băm (Hash)', 'SHA-256 biến dữ liệu bất kỳ thành chuỗi 64 ký tự. Chỉ cần đổi 1 ký tự đầu vào, hash thay đổi hoàn toàn.'],
       ['Block', 'Mỗi block chứa: số thứ tự, thời gian, danh sách giao dịch, hash của block trước, nonce và hash của chính nó.'],
       ['Proof-of-Work', 'Thợ đào thử lần lượt nonce = 0, 1, 2… cho tới khi hash bắt đầu bằng đủ số chữ 0 (độ khó). Người tìm ra được thưởng ' + bc.reward + ' MC.'],
-      ['Chuỗi liên kết', 'Block sau lưu hash của block trước. Sửa một block làm hash của nó đổi, khiến mọi block phía sau mất liên kết – đó là tính bất biến.']
+      ['Chuỗi liên kết', 'Block sau lưu hash của block trước. Sửa một block làm hash của nó đổi, khiến mọi block phía sau mất liên kết – đó là tính bất biến.'],
+      ['Mempool', 'Giao dịch mới chưa được xác nhận mà nằm chờ trong mempool. Khi thợ đào tìm được block, các giao dịch này được đưa vào block và trở thành không thể sửa.'],
+      ['Ví MetaMask & chữ ký số', 'MetaMask giữ khoá bí mật của bạn. Khi gửi MC từ ví MetaMask, ứng dụng yêu cầu ký (personal_sign); chữ ký chứng minh chủ ví đã đồng ý mà không làm lộ khoá.']
     ];
     return `<div class="grid halves">
         ${concepts.map((c, i) => `<div class="card concept"><div class="num">${i + 1}</div><div><h3>${c[0]}</h3><p>${c[1]}</p></div></div>`).join('')}
@@ -631,6 +633,7 @@
             <li>Vào <b>Đào block</b>, chọn độ khó 3–4 và bấm đào → giao dịch được xác nhận, thợ đào nhận thưởng.</li>
             <li>Vào <b>Khám phá chuỗi</b>, bật chế độ thử sửa, đổi số tiền trong block #1 → block bị đánh dấu đỏ.</li>
             <li>Bấm <b>Đào lại block</b> → block #1 hợp lệ nhưng block #2 lại đứt liên kết. Muốn gian lận phải đào lại cả chuỗi.</li>
+            <li>Vào <b>Ví MetaMask</b>, kết nối ví và bấm <b>Thêm vào MiniChain</b>, rồi gửi MC từ ví đó → MetaMask yêu cầu ký giao dịch.</li>
           </ol>
         </div>
       </div>`;
