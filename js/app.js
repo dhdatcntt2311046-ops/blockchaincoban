@@ -5,9 +5,9 @@
 (function () {
   'use strict';
 
-  const { Blockchain, mineAsync, ZERO_HASH, SYSTEM, DEMO_PASSWORD, RULES } = window.MiniChain;
+  const { Blockchain, mineAsync, ZERO_HASH, SYSTEM, DEMO_PASSWORD, ADMIN_USER, ADMIN_PASSWORD } = window.MiniChain;
   const STORE_KEY = 'minichain.v2';          // v2: ví có mật khẩu + khoá bí mật
-  const SESSION_KEY = 'minichain.session';   // địa chỉ ví đang đăng nhập
+  const SESSION_KEY = 'minichain.session';   // địa chỉ ví đang đăng nhập, hoặc "admin"
 
   // ---------- Trạng thái ----------
   let bc = load() || Blockchain.create();
@@ -16,6 +16,7 @@
   const ui = {
     view: 'dashboard',
     me: loadSession(),  // địa chỉ ví đang đăng nhập (null = chưa đăng nhập)
+    admin: readSession() === 'admin',   // đang đăng nhập bằng tài khoản quản trị viên
     tamper: false,
     query: '',
     focusBlock: null,
@@ -36,29 +37,48 @@
   }
 
   // ---------- Phiên đăng nhập ----------
-  function loadSession() {
+  function readSession() {
+    try { return localStorage.getItem(SESSION_KEY); } catch (e) { return null; }
+  }
+  function writeSession(v) {
     try {
-      const a = localStorage.getItem(SESSION_KEY);
-      return a && bc.wallets.some((w) => w.address === a) ? a : null;
-    } catch (e) {
-      return null;
-    }
+      if (v) localStorage.setItem(SESSION_KEY, v);
+      else localStorage.removeItem(SESSION_KEY);
+    } catch (e) { /* bỏ qua */ }
+  }
+  function loadSession() {
+    const a = readSession();
+    return a && a !== 'admin' && bc.wallets.some((w) => w.address === a && !w.locked) ? a : null;
   }
   function me() {
     return ui.me ? bc.wallets.find((w) => w.address === ui.me) || null : null;
   }
   function login(wallet, how) {
+    if (wallet.locked) throw new Error('Ví "' + wallet.name + '" đã bị quản trị viên khoá.');
     ui.me = wallet.address;
-    try { localStorage.setItem(SESSION_KEY, wallet.address); } catch (e) { /* bỏ qua */ }
+    ui.admin = false;
+    writeSession(wallet.address);
     closeModal();
     toast('Đã đăng nhập ví "' + wallet.name + '"' + (how ? ' bằng ' + how : '') + '.', 'ok');
+    if (ui.view === 'admin') ui.view = 'dashboard';
     render();
+  }
+  function loginAsAdmin() {
+    if (ui.mining) ui.mining.stop = true;
+    ui.me = null;
+    ui.admin = true;
+    writeSession('admin');
+    closeModal();
+    toast('Đã đăng nhập quản trị viên.', 'ok');
+    go('admin');
   }
   function logout(silent) {
     if (ui.mining) ui.mining.stop = true;
+    const wasAdmin = ui.admin;
     ui.me = null;
-    try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* bỏ qua */ }
-    if (!silent) toast('Đã đăng xuất ví.');
+    ui.admin = false;
+    writeSession(null);
+    if (!silent) toast(wasAdmin ? 'Đã đăng xuất quản trị viên.' : 'Đã đăng xuất ví.');
     render();
   }
 
@@ -111,7 +131,8 @@
     transactions: { title: 'Giao dịch', sub: 'Gửi MC từ ví đang đăng nhập – giao dịch chờ trong mempool tới khi vào block.', render: renderTransactions, bind: bindTransactions },
     mining: { title: 'Đào block', sub: 'Proof-of-Work: ví đang đăng nhập đào block và nhận phần thưởng.', render: renderMining, bind: bindMining },
     explorer: { title: 'Khám phá chuỗi', sub: 'Xem từng block, cách các block liên kết với nhau và thử sửa dữ liệu.', render: renderExplorer, bind: bindExplorer },
-    guide: { title: 'Hướng dẫn', sub: 'Các khái niệm blockchain cơ bản được minh hoạ trong ứng dụng.', render: renderGuide, bind: bindGuide }
+    guide: { title: 'Hướng dẫn', sub: 'Các khái niệm blockchain cơ bản được minh hoạ trong ứng dụng.', render: renderGuide, bind: bindGuide },
+    admin: { title: 'Quản trị', sub: 'Chỉ quản trị viên: quản lý ví, luật mạng, mempool, hệ thống.', render: renderAdmin, bind: bindAdmin }
   };
 
   function go(view, opts) {
@@ -122,6 +143,12 @@
   }
 
   function render() {
+    if (ui.me && (!me() || me().locked)) {
+      // Ví đang dùng bị khoá (hoặc không còn) => tự đăng xuất
+      ui.me = null;
+      writeSession(null);
+      toast('Ví của bạn đã bị quản trị viên khoá – đã đăng xuất.', 'bad');
+    }
     if (!VIEWS[ui.view]) ui.view = 'dashboard';
     const v = VIEWS[ui.view];
     $$('.nav-item').forEach((b) => {
@@ -153,9 +180,16 @@
     const w = me();
     if (acc) {
       acc.classList.toggle('on', !!w);
-      acc.innerHTML = w ? `${avatar(w.address)}<span>${esc(w.name)}</span>` : '<span class="lock">🔒</span><span>Đăng nhập ví</span>';
-      acc.title = w ? 'Đang đăng nhập: ' + w.address : 'Đăng nhập vào ví để gửi giao dịch và đào block';
+      acc.classList.toggle('admin', ui.admin);
+      acc.innerHTML = ui.admin ? '<span class="lock">🛡</span><span>Quản trị viên</span>'
+        : w ? `${avatar(w.address)}<span>${esc(w.name)}</span>` : '<span class="lock">🔒</span><span>Đăng nhập ví</span>';
+      acc.title = ui.admin ? 'Đang đăng nhập quản trị viên' : w ? 'Đang đăng nhập: ' + w.address : 'Đăng nhập vào ví để gửi giao dịch và đào block';
     }
+    // Chức năng chỉ quản trị viên mới thấy
+    const navAdmin = $('.nav-item[data-view=admin]');
+    if (navAdmin) navAdmin.hidden = !ui.admin;
+    const reset = $('#btn-reset');
+    if (reset) reset.hidden = !ui.admin;
   }
 
   /** Thẻ yêu cầu đăng nhập, hiện ở các màn hình cần ví. */
@@ -166,7 +200,8 @@
       <p class="muted">Hãy đăng nhập vào ví của bạn để ${what}. Chỉ chủ ví (biết mật khẩu hoặc khoá bí mật) mới dùng được ví.</p>
       <div class="btn-row"><button class="btn" data-login="">Đăng nhập ví</button>
         <button class="btn btn-ghost" data-go="wallets">Tạo ví mới</button></div>
-      <p class="note">Ví mẫu An, Bình, Chi, Dũng có mật khẩu <b class="mono">${DEMO_PASSWORD}</b>.</p>
+      ${ui.admin ? '<p class="note">Bạn đang đăng nhập quản trị viên. Quản trị viên không có ví – hãy đăng xuất rồi đăng nhập ví để dùng chức năng này.</p>'
+        : `<p class="note">Ví mẫu An, Bình, Chi, Dũng có mật khẩu <b class="mono">${DEMO_PASSWORD}</b>.</p>`}
     </div>`;
   }
 
@@ -226,6 +261,16 @@
         <div class="form-error" id="lg-error"></div>
         <button class="btn btn-block" type="submit">Đăng nhập bằng khoá bí mật</button>
       </form>`;
+    } else if (t === 'admin') {
+      body = `<form id="lg-form" autocomplete="off">
+        <div class="field"><label for="lg-admin-user">Tên đăng nhập quản trị</label>
+          <input class="input" id="lg-admin-user" maxlength="32" placeholder="admin"></div>
+        <div class="field"><label for="lg-admin-pass">Mật khẩu</label>
+          <input class="input" id="lg-admin-pass" type="password" placeholder="••••••"></div>
+        <div class="form-error" id="lg-error"></div>
+        <button class="btn btn-block" type="submit">🛡 Đăng nhập quản trị</button>
+        <p class="note">Tài khoản mặc định: <b class="mono">${ADMIN_USER}</b> / <b class="mono">${ADMIN_PASSWORD}</b> – nên đổi mật khẩu trong trang Quản trị.</p>
+      </form>`;
     } else {
       body = `<div>
         <p class="muted" style="margin-top:0">MetaMask sẽ yêu cầu bạn <b>ký một thông điệp đăng nhập</b> để chứng minh bạn là chủ địa chỉ. Ký thông điệp không tốn phí và không gửi tiền.</p>
@@ -234,8 +279,8 @@
         <button class="btn btn-block" id="lg-mm" type="button">🦊 Đăng nhập bằng MetaMask</button>
       </div>`;
     }
-    openModal(`<div class="modal-head"><h3>Đăng nhập ví</h3><button class="icon-btn" data-close aria-label="Đóng">✕</button></div>
-      <div class="tabs">${tabBtn('password', 'Mật khẩu')}${tabBtn('key', 'Khoá bí mật')}${tabBtn('metamask', 'MetaMask')}</div>
+    openModal(`<div class="modal-head"><h3>${t === 'admin' ? 'Đăng nhập quản trị' : 'Đăng nhập ví'}</h3><button class="icon-btn" data-close aria-label="Đóng">✕</button></div>
+      <div class="tabs four">${tabBtn('password', 'Mật khẩu')}${tabBtn('key', 'Khoá bí mật')}${tabBtn('metamask', 'MetaMask')}${tabBtn('admin', 'Quản trị')}</div>
       ${body}
       <p class="modal-foot">Chưa có ví? <button class="link" type="button" id="lg-new">Tạo ví mới</button></p>`, (root) => {
       root.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => {
@@ -249,6 +294,7 @@
         e.preventDefault();
         try {
           if (t === 'password') login(bc.loginWithPassword(root.querySelector('#lg-name').value, root.querySelector('#lg-pass').value), 'mật khẩu');
+          else if (t === 'admin') { bc.loginAdmin(root.querySelector('#lg-admin-user').value, root.querySelector('#lg-admin-pass').value); loginAsAdmin(); }
           else login(bc.loginWithKey(root.querySelector('#lg-key').value), 'khoá bí mật');
         } catch (ex) {
           err(ex.message);
@@ -273,6 +319,18 @@
   }
 
   function openAccount() {
+    if (ui.admin) {
+      return openModal(`<div class="modal-head"><h3>🛡 Quản trị viên</h3><button class="icon-btn" data-close aria-label="Đóng">✕</button></div>
+        <div class="kv"><span>Tên đăng nhập</span><b class="mono">${esc(bc.admin.username)}</b></div>
+        <div class="kv"><span>Số ví đang bị khoá</span><b>${bc.stats().locked}</b></div>
+        <div class="kv"><span>Giao dịch trong mempool</span><b>${bc.pending.length}</b></div>
+        <div class="btn-row" style="margin-top:16px">
+          <button class="btn" type="button" data-close data-go="admin">Mở trang Quản trị</button>
+          <button class="btn btn-danger" type="button" id="acc-logout">Đăng xuất</button>
+        </div>`, (root) => {
+        root.querySelector('#acc-logout').addEventListener('click', () => { closeModal(); logout(); });
+      });
+    }
     const w = me();
     if (!w) return openLogin();
     openModal(`<div class="modal-head"><h3>Ví của tôi</h3><button class="icon-btn" data-close aria-label="Đóng">✕</button></div>
@@ -427,7 +485,7 @@
         <div class="wallet-bal">${fmtNum(bal)} <small>MC</small></div>
         <div class="wallet-meta"><span>${txCount} giao dịch</span><span>${out ? 'Đang chờ gửi: −' + fmtAmt(out) : 'Không có GD chờ'}</span></div>
         <div class="actions">
-          ${w.address === ui.me
+          ${w.locked ? '<span class="chip bad">🔒 Bị khoá bởi quản trị viên</span>' : w.address === ui.me
             ? '<span class="chip ok">● Đang đăng nhập</span><button class="btn btn-sm btn-ghost" data-logout>Đăng xuất</button>'
             : `<button class="btn btn-sm btn-ghost" data-login="${esc(w.name)}" ${w.metamask ? 'data-login-tab="metamask"' : ''}>🔑 Đăng nhập</button>`}
         </div>
@@ -482,9 +540,9 @@
         <div class="field"><label for="tx-amount">Số tiền (MC)</label><input class="input" id="tx-amount" type="number" min="0" step="any" placeholder="0">
           <div class="amount-chips"><button type="button" data-amt="5">5</button><button type="button" data-amt="10">10</button><button type="button" data-amt="25">25</button><button type="button" data-amt="max">Tối đa</button></div></div>
         <div class="field"><label for="tx-fee">Phí giao dịch (MC) – trả cho thợ đào</label>
-          <input class="input" id="tx-fee" type="number" min="0" max="10" step="any" value="${RULES.defaultFee}">
+          <input class="input" id="tx-fee" type="number" min="0" max="10" step="any" value="${bc.rules.defaultFee}">
           <div class="amount-chips fee-chips"><button type="button" data-fee="0.01">Thấp · 0,01</button><button type="button" data-fee="0.1">Thường · 0,1</button><button type="button" data-fee="0.5">Nhanh · 0,5</button></div>
-          <div class="help">Mỗi block chỉ chứa tối đa ${RULES.maxTxPerBlock} giao dịch; thợ đào ưu tiên phí cao. Tổng trừ khỏi ví: <b id="tx-total">—</b></div></div>
+          <div class="help">Mỗi block chỉ chứa tối đa ${bc.rules.maxTxPerBlock} giao dịch; thợ đào ưu tiên phí cao. Tổng trừ khỏi ví: <b id="tx-total">—</b></div></div>
         <div class="field"><label for="tx-note">Ghi chú</label><input class="input" id="tx-note" maxlength="60" placeholder="VD: Trả tiền ăn trưa"></div>
         <div class="form-error" id="tx-error"></div>
         <button class="btn btn-block" type="submit">${w.metamask ? 'Ký bằng MetaMask & gửi' : 'Gửi vào mempool'}</button>
@@ -583,7 +641,7 @@
     const m = ui.mining;
     const valid = bc.isValid();
     const w = me();
-    const R = RULES;
+    const R = bc.rules;
     const d = m ? m.block.difficulty : bc.difficulty;
     const p = m && m.progress;
     const target = '0'.repeat(d);
@@ -718,13 +776,14 @@
       } else {
         try {
           const cb = result.transactions[0];
+          const rewardBefore = bc.nextReward();
           const adj = bc.commitBlock(result);
           save();
           toast(`Đào thành công block #${result.index} sau ${fmtNum(result.hashes)} lần thử (${fmtMs(result.minedIn)})! +${fmtAmt(cb.amount)} cho ${bc.nameOf(result.miner)}.`, 'ok');
           if (adj && adj.to !== adj.from) {
             toast(`Mạng điều chỉnh độ khó ${adj.from} → ${adj.to} (trung bình ${fmtMs(adj.avg)}/block).`, '');
           }
-          if (result.index % RULES.halvingInterval === RULES.halvingInterval - 1) {
+          if (bc.nextReward() < rewardBefore) {
             toast(`Halving! Phần thưởng block giảm còn ${fmtAmt(bc.reward)}.`, '');
           }
           ui.focusBlock = result.index;
@@ -822,7 +881,7 @@
       const data = JSON.stringify({
         exportedAt: new Date().toISOString(),
         valid: bc.isValid(),
-        rules: RULES,
+        ruleHistory: bc.ruleHistory,
         difficulty: bc.difficulty,
         nextReward: bc.nextReward(),
         wallets: bc.wallets,
@@ -884,16 +943,211 @@
     });
   }
 
+  // ---------- Màn hình: Quản trị (chỉ quản trị viên) ----------
+  function renderAdmin() {
+    if (!ui.admin) {
+      return `<div class="card login-gate">
+        <div class="gate-icon">🛡</div>
+        <h3>Chỉ quản trị viên mới vào được trang này</h3>
+        <p class="muted">Đăng nhập bằng tài khoản quản trị để quản lý ví, luật mạng, mempool và dữ liệu hệ thống.</p>
+        <div class="btn-row"><button class="btn" data-login="" data-login-tab="admin">🛡 Đăng nhập quản trị</button></div>
+      </div>`;
+    }
+    const s = bc.stats();
+    const R = bc.rules;
+    const next = bc.latest.index + 1;
+
+    const walletRows = bc.wallets.map((w) => `<tr>
+        <td>${who(w.address)}${w.metamask ? ' <span class="chip accent">MetaMask</span>' : ''}</td>
+        <td class="mono muted">${short(w.address, 8, 6)}</td>
+        <td class="amt">${fmtAmt(bc.balanceOf(w.address))}</td>
+        <td>${w.locked ? '<span class="chip bad">🔒 Bị khoá</span>' : '<span class="chip ok">Hoạt động</span>'}</td>
+        <td><div class="row-actions">
+          ${w.locked ? `<button class="btn btn-sm btn-ghost" data-adm-unlock="${w.address}">Mở khoá</button>`
+            : `<button class="btn btn-sm btn-ghost" data-adm-lock="${w.address}">Khoá</button>`}
+          <button class="btn btn-sm btn-ghost" data-adm-pw="${w.address}" ${w.metamask ? 'disabled title="Ví MetaMask không dùng mật khẩu"' : ''}>Đặt lại mật khẩu</button>
+          <button class="btn btn-sm" data-adm-mint="${w.address}">+ Cấp MC</button>
+        </div></td></tr>`).join('');
+
+    const pool = bc.sortedPending();
+    const poolHtml = pool.length
+      ? `<div class="table-wrap"><table><thead><tr><th>Mã GD</th><th>Từ</th><th>Đến</th><th class="amt">Số tiền</th><th class="amt">Phí</th><th></th></tr></thead>
+        <tbody>${pool.map((tx) => `<tr><td class="mono muted">${tx.id.slice(0, 8)}${tx.mint ? ' <span class="chip accent">Cấp phát</span>' : ''}</td>
+          <td>${who(tx.from)}</td><td>${who(tx.to)}</td><td class="amt">${fmtAmt(tx.amount)}</td><td class="amt">${fmtAmt(tx.fee || 0)}</td>
+          <td><button class="btn btn-sm btn-danger" data-adm-del="${tx.id}" ${ui.mining && ui.mining.block.transactions.some((t) => t.id === tx.id) ? 'disabled title="Đang được đào"' : ''}>Xoá</button></td></tr>`).join('')}</tbody></table></div>`
+      : '<div class="empty">Mempool trống.</div>';
+
+    const versions = bc.ruleHistory.slice().reverse().map((v) => `<tr>
+        <td>#${v.from}${v.from === 0 ? ' <span class="chip">Ban đầu</span>' : ''}</td>
+        <td class="amt">${fmtAmt(v.rules.initialReward)}</td><td class="amt">${v.rules.halvingInterval} block</td>
+        <td class="amt">${v.rules.maxTxPerBlock}</td><td class="amt">${v.rules.targetBlockMs / 1000} giây</td>
+        <td class="amt">${v.rules.adjustInterval} block</td><td class="amt">${v.rules.minDifficulty}–${v.rules.maxDifficulty}</td></tr>`).join('');
+
+    const logHtml = bc.adminLog.length
+      ? `<div class="mm-log">${bc.adminLog.map((l) => `<div><time>${fmtTime(l.time)}</time><span>${esc(l.action)}</span></div>`).join('')}</div>`
+      : '<div class="empty">Chưa có thao tác quản trị nào.</div>';
+
+    const field = (id, label, value, attrs) => `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" type="number" value="${value}" ${attrs || ''}></div>`;
+
+    return `<div class="grid stats">
+        ${statCard('Số ví', fmtNum(s.wallets), s.locked + ' ví đang bị khoá', 'rgba(124,140,255,.16)')}
+        ${statCard('Giao dịch chờ', fmtNum(s.pending), 'Trong mempool', 'rgba(251,191,36,.16)')}
+        ${statCard('Chiều cao chuỗi', '#' + bc.latest.index, 'Luật mới áp dụng từ #' + next, 'rgba(45,212,191,.16)')}
+        ${statCard('Tổng cung', fmtAmt(s.supply), 'Gồm cả MC do quản trị viên cấp', 'rgba(52,211,153,.16)')}
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Quản lý ví</h3><span class="hint">Ví bị khoá không đăng nhập, gửi MC hay đào được, nhưng vẫn nhận MC</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Ví</th><th>Địa chỉ</th><th class="amt">Số dư</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+          <tbody>${walletRows}</tbody></table></div>
+      </div>
+      <div class="grid rules-grid">
+        <form class="card" id="adm-rules" autocomplete="off">
+          <div class="card-head"><h3>Luật mạng</h3><span class="chip warn">Áp dụng từ block #${next}</span></div>
+          <p class="muted" style="margin:0 0 14px;font-size:13px">Giống một lần nâng cấp mạng: luật mới chỉ áp dụng cho block kế tiếp trở đi, các block cũ vẫn được kiểm tra theo luật lúc chúng được đào.</p>
+          <div class="field-grid">
+            ${field('adm-reward', 'Phần thưởng ban đầu (MC)', R.initialReward, 'min="1" max="1000" step="any"')}
+            ${field('adm-halving', 'Halving sau mỗi (block)', R.halvingInterval, 'min="2" max="1000"')}
+            ${field('adm-maxtx', 'Giao dịch tối đa / block', R.maxTxPerBlock, 'min="1" max="20"')}
+            ${field('adm-target', 'Thời gian mục tiêu (giây)', R.targetBlockMs / 1000, 'min="1" max="60"')}
+            ${field('adm-adjust', 'Chỉnh độ khó sau mỗi (block)', R.adjustInterval, 'min="1" max="100"')}
+            ${field('adm-diff', 'Độ khó hiện tại', bc.difficulty, 'min="1" max="5"')}
+            ${field('adm-dmin', 'Độ khó tối thiểu', R.minDifficulty, 'min="1" max="5"')}
+            ${field('adm-dmax', 'Độ khó tối đa', R.maxDifficulty, 'min="1" max="5"')}
+          </div>
+          <div class="form-error" id="adm-rules-error"></div>
+          <button class="btn btn-block" type="submit" ${ui.mining ? 'disabled' : ''}>Áp dụng luật mới</button>
+        </form>
+        <div class="card">
+          <div class="card-head"><h3>Lịch sử phiên bản luật</h3><span class="hint">${bc.ruleHistory.length} phiên bản</span></div>
+          <div class="table-wrap"><table class="compact"><thead><tr><th>Từ block</th><th class="amt">Thưởng</th><th class="amt">Halving</th><th class="amt">GD / block</th><th class="amt">Mục tiêu</th><th class="amt">Chỉnh độ khó</th><th class="amt">Độ khó</th></tr></thead>
+            <tbody>${versions}</tbody></table></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Mempool (${pool.length})</h3><span class="hint">Quản trị viên xoá được mọi giao dịch đang chờ</span></div>
+        ${poolHtml}
+      </div>
+      <div class="grid halves">
+        <form class="card" id="adm-pw" autocomplete="off">
+          <div class="card-head"><h3>Đổi mật khẩu quản trị</h3></div>
+          <div class="field"><label for="adm-old">Mật khẩu hiện tại</label><input class="input" id="adm-old" type="password"></div>
+          <div class="field"><label for="adm-new">Mật khẩu mới (ít nhất 6 ký tự)</label><input class="input" id="adm-new" type="password" autocomplete="new-password"></div>
+          <div class="field"><label for="adm-new2">Nhập lại mật khẩu mới</label><input class="input" id="adm-new2" type="password" autocomplete="new-password"></div>
+          <div class="form-error" id="adm-pw-error"></div>
+          <button class="btn btn-block" type="submit">Đổi mật khẩu</button>
+        </form>
+        <div class="card">
+          <div class="card-head"><h3>Hệ thống</h3></div>
+          <div class="kv"><span>Tài khoản quản trị</span><b class="mono">${esc(bc.admin.username)}</b></div>
+          <div class="kv"><span>Dữ liệu lưu tại</span><b class="mono">localStorage</b></div>
+          <div class="banner bad" style="margin-top:14px"><div class="b-icon">!</div>
+            <div><b>Đặt lại dữ liệu</b><p>Xoá mọi ví, block, giao dịch và nhật ký; tạo lại chuỗi mẫu. Không thể hoàn tác.</p></div>
+            <button class="btn btn-sm btn-danger" type="button" id="adm-reset">Đặt lại</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Nhật ký quản trị</h3><span class="hint">50 thao tác gần nhất</span></div>
+        ${logHtml}
+      </div>`;
+  }
+
+  function bindAdmin() {
+    if (!ui.admin) return;
+    const done = (msg) => { save(); toast(msg, 'ok'); render(); };
+    const fail = (err) => toast(err.message, 'bad');
+
+    $$('[data-adm-lock]').forEach((b) => b.addEventListener('click', () => {
+      const w = bc.walletOrThrow(b.dataset.admLock);
+      if (ui.mining && ui.mining.block.miner === w.address) { toast('Ví này đang đào block – hãy đợi đào xong.', 'bad'); return; }
+      if (!window.confirm('Khoá ví "' + w.name + '"? Các giao dịch đang chờ của ví này sẽ bị huỷ.')) return;
+      try { bc.setWalletLocked(w.address, true); done('Đã khoá ví "' + w.name + '".'); } catch (err) { fail(err); }
+    }));
+    $$('[data-adm-unlock]').forEach((b) => b.addEventListener('click', () => {
+      try { const w = bc.setWalletLocked(b.dataset.admUnlock, false); done('Đã mở khoá ví "' + w.name + '".'); } catch (err) { fail(err); }
+    }));
+    $$('[data-adm-pw]').forEach((b) => b.addEventListener('click', () => {
+      const w = bc.walletOrThrow(b.dataset.admPw);
+      openModal(`<div class="modal-head"><h3>Đặt lại mật khẩu ví "${esc(w.name)}"</h3><button class="icon-btn" data-close aria-label="Đóng">✕</button></div>
+        <form id="ap-form" autocomplete="off">
+          <div class="field"><label for="ap-new">Mật khẩu mới (ít nhất 6 ký tự)</label><input class="input" id="ap-new" type="password" autocomplete="new-password"></div>
+          <div class="field"><label for="ap-new2">Nhập lại mật khẩu mới</label><input class="input" id="ap-new2" type="password" autocomplete="new-password"></div>
+          <div class="form-error" id="ap-error"></div>
+          <button class="btn btn-block" type="submit">Đặt lại mật khẩu</button>
+          <p class="note">Khoá bí mật của ví không đổi – chủ ví vẫn đăng nhập được bằng khoá cũ.</p>
+        </form>`, (root) => {
+        root.querySelector('#ap-form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          try {
+            bc.resetWalletPassword(w.address, root.querySelector('#ap-new').value, root.querySelector('#ap-new2').value);
+            closeModal();
+            done('Đã đặt lại mật khẩu ví "' + w.name + '".');
+          } catch (err) { root.querySelector('#ap-error').textContent = err.message; }
+        });
+      });
+    }));
+    $$('[data-adm-mint]').forEach((b) => b.addEventListener('click', () => {
+      const w = bc.walletOrThrow(b.dataset.admMint);
+      openModal(`<div class="modal-head"><h3>Cấp MC cho ví "${esc(w.name)}"</h3><button class="icon-btn" data-close aria-label="Đóng">✕</button></div>
+        <form id="am-form" autocomplete="off">
+          <div class="field"><label for="am-amount">Số MC (tối đa 10.000)</label><input class="input" id="am-amount" type="number" min="0" step="any" placeholder="100"></div>
+          <div class="field"><label for="am-note">Ghi chú</label><input class="input" id="am-note" maxlength="60" placeholder="Cấp phát bởi quản trị viên"></div>
+          <div class="form-error" id="am-error"></div>
+          <button class="btn btn-block" type="submit">Cấp MC</button>
+          <p class="note">Giao dịch cấp phát đi từ "Hệ thống", được ưu tiên đưa vào block kế tiếp. Ví chỉ nhận được MC sau khi block đó được đào.</p>
+        </form>`, (root) => {
+        root.querySelector('#am-form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          try {
+            const tx = bc.mint(w.address, root.querySelector('#am-amount').value, root.querySelector('#am-note').value);
+            closeModal();
+            done('Đã tạo giao dịch cấp ' + fmtAmt(tx.amount) + ' cho "' + w.name + '" – chờ đào vào block.');
+          } catch (err) { root.querySelector('#am-error').textContent = err.message; }
+        });
+      });
+    }));
+    $$('[data-adm-del]').forEach((b) => b.addEventListener('click', () => {
+      try { bc.removePending(b.dataset.admDel); done('Đã xoá giao dịch khỏi mempool.'); } catch (err) { fail(err); }
+    }));
+
+    $('#adm-rules').addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (ui.mining) { toast('Đang đào block – hãy đợi đào xong rồi đổi luật.', 'bad'); return; }
+      try {
+        const v = (id) => $('#' + id).value;
+        const target = v('adm-target');
+        const r = bc.updateRules({
+          initialReward: v('adm-reward'), halvingInterval: v('adm-halving'), maxTxPerBlock: v('adm-maxtx'),
+          targetBlockMs: target === '' ? '' : Number(target) * 1000, adjustInterval: v('adm-adjust'),
+          minDifficulty: v('adm-dmin'), maxDifficulty: v('adm-dmax')
+        }, v('adm-diff'));
+        done(r.changed.length ? 'Đã áp dụng luật mới từ block #' + r.from + '.' : 'Đã đổi độ khó hiện tại.');
+      } catch (err) {
+        $('#adm-rules-error').textContent = err.message;
+      }
+    });
+    $('#adm-pw').addEventListener('submit', (e) => {
+      e.preventDefault();
+      try {
+        bc.changeAdminPassword($('#adm-old').value, $('#adm-new').value, $('#adm-new2').value);
+        done('Đã đổi mật khẩu quản trị.');
+      } catch (err) {
+        $('#adm-pw-error').textContent = err.message;
+      }
+    });
+    $('#adm-reset').addEventListener('click', resetData);
+  }
+
   // ---------- Màn hình: Hướng dẫn ----------
   function renderGuide() {
     const concepts = [
       ['Hàm băm (Hash)', 'SHA-256 biến dữ liệu bất kỳ thành chuỗi 64 ký tự. Chỉ cần đổi 1 ký tự đầu vào, hash thay đổi hoàn toàn.'],
       ['Block & Merkle root', 'Tiêu đề block gồm: số thứ tự, hash block trước, thời gian, Merkle root, độ khó và nonce. Merkle root là hash tóm tắt mọi giao dịch – sửa 1 giao dịch là Merkle root đổi.'],
       ['Proof-of-Work', 'Thợ đào thử lần lượt nonce = 0, 1, 2… cho tới khi hash tiêu đề bắt đầu bằng đủ số chữ 0. Với độ khó d, trung bình cần 16^d lần thử.'],
-      ['Phần thưởng, phí & halving', 'Giao dịch đầu tiên của block (coinbase) trả cho thợ đào phần thưởng + tổng phí. Phần thưởng giảm một nửa sau mỗi ' + RULES.halvingInterval + ' block (hiện tại ' + bc.nextReward() + ' MC).'],
-      ['Độ khó tự điều chỉnh', 'Cứ ' + RULES.adjustInterval + ' block, mạng so thời gian đào trung bình với mục tiêu ~' + RULES.targetBlockMs / 1000 + ' giây: đào quá nhanh thì tăng độ khó, quá chậm thì giảm.'],
+      ['Phần thưởng, phí & halving', 'Giao dịch đầu tiên của block (coinbase) trả cho thợ đào phần thưởng + tổng phí. Phần thưởng giảm một nửa sau mỗi ' + bc.rules.halvingInterval + ' block (hiện tại ' + bc.nextReward() + ' MC).'],
+      ['Độ khó tự điều chỉnh', 'Cứ ' + bc.rules.adjustInterval + ' block, mạng so thời gian đào trung bình với mục tiêu ~' + bc.rules.targetBlockMs / 1000 + ' giây: đào quá nhanh thì tăng độ khó, quá chậm thì giảm.'],
       ['Chuỗi liên kết', 'Block sau lưu hash của block trước. Sửa một block làm hash của nó đổi, khiến mọi block phía sau mất liên kết – đó là tính bất biến.'],
-      ['Mempool & xác nhận', 'Giao dịch mới nằm chờ trong mempool. Mỗi block chỉ chứa tối đa ' + RULES.maxTxPerBlock + ' giao dịch, ưu tiên phí cao. Mỗi block xây thêm phía sau là thêm 1 xác nhận; từ 6 xác nhận coi như chắc chắn.'],
+      ['Mempool & xác nhận', 'Giao dịch mới nằm chờ trong mempool. Mỗi block chỉ chứa tối đa ' + bc.rules.maxTxPerBlock + ' giao dịch, ưu tiên phí cao. Mỗi block xây thêm phía sau là thêm 1 xác nhận; từ 6 xác nhận coi như chắc chắn.'],
+      ['Quản trị viên', 'Blockchain công khai thật không có quản trị viên. MiniChain thêm vai trò này để quản lý bản demo và mô phỏng chuỗi có cấp phép: khoá ví, cấp MC, đổi luật mạng (chỉ có hiệu lực từ block kế tiếp, giống một lần nâng cấp mạng).'],
       ['Đăng nhập ví', 'Mỗi ví có khoá bí mật; địa chỉ ví = SHA-256(khoá). Chỉ ai biết mật khẩu hoặc khoá bí mật mới gửi được MC hay nhận thưởng đào bằng ví đó.'],
       ['Ví MetaMask & chữ ký số', 'MetaMask giữ khoá bí mật của bạn. Khi gửi MC từ ví MetaMask, ứng dụng yêu cầu ký (personal_sign); chữ ký chứng minh chủ ví đã đồng ý mà không làm lộ khoá.']
     ];
@@ -941,19 +1195,21 @@
     else if (t.hasAttribute('data-logout')) logout();
   });
 
-  $('#btn-account').addEventListener('click', () => (ui.me ? openAccount() : openLogin()));
+  $('#btn-account').addEventListener('click', () => (ui.me || ui.admin ? openAccount() : openLogin()));
 
-  $('#btn-reset').addEventListener('click', () => {
-    if (!window.confirm('Xoá toàn bộ dữ liệu và tạo lại chuỗi mẫu?')) return;
+  /** Đặt lại dữ liệu – chỉ quản trị viên. */
+  function resetData() {
+    if (!ui.admin) { toast('Chỉ quản trị viên mới được đặt lại dữ liệu.', 'bad'); return; }
+    if (!window.confirm('Xoá toàn bộ dữ liệu và tạo lại chuỗi mẫu? Mật khẩu quản trị cũng trở về mặc định.')) return;
     if (ui.mining) ui.mining.stop = true;
     bc = Blockchain.create();
+    bc.log('Đặt lại dữ liệu mẫu');
     save();
-    ui.me = null;
-    try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* bỏ qua */ }
-    Object.assign(ui, { mining: null, remining: null, tamper: false, query: '' });
+    Object.assign(ui, { me: null, mining: null, remining: null, tamper: false, query: '' });
     toast('Đã đặt lại dữ liệu mẫu.', 'ok');
-    go('dashboard');
-  });
+    render();
+  }
+  $('#btn-reset').addEventListener('click', resetData);
 
   // Đăng ký màn hình "Ví MetaMask" (js/metamask.js)
   if (window.MetaMaskUI) {
