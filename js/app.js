@@ -146,7 +146,7 @@
         ${opts.block ? `<td><button class="link" data-block="${r.block}">#${r.block}</button></td>` : ''}
         <td>${who(r.tx.from)}</td>
         <td>${who(r.tx.to)}</td>
-        <td class="muted">${esc(r.tx.note || '—')}</td>
+        <td class="muted">${esc(r.tx.note || '—')}${r.tx.signature ? ' <span class="chip ok" title="Đã ký bằng MetaMask">✍ Đã ký</span>' : ''}</td>
         <td class="amt">${fmtAmt(r.tx.amount)}</td>
       </tr>`).join('')}</tbody></table></div>`;
   }
@@ -218,7 +218,7 @@
       const txCount = bc.chain.reduce((n, b) => n + b.transactions.filter((t) => t.from === w.address || t.to === w.address).length, 0);
       return `<div class="card wallet-card">
         <div class="wallet-top">${avatar(w.address, true)}
-          <div><h4>${esc(w.name)}</h4>
+          <div><h4>${esc(w.name)}${w.metamask ? ' <span class="chip accent">MetaMask</span>' : ''}</h4>
           <div class="addr">${short(w.address, 8, 6)} <button class="copy" data-copy="${w.address}">Sao chép</button></div></div>
         </div>
         <div class="wallet-bal">${fmtNum(bal)} <small>MC</small></div>
@@ -264,7 +264,7 @@
       ? bc.pending.map((tx) => `<div class="pool-item">
           <div class="flow">${who(tx.from)}<span class="arrow">→</span>${who(tx.to)}</div>
           <div class="amt">${fmtAmt(tx.amount)}</div>
-          <div class="sub"><span class="mono">#${tx.id.slice(0, 8)}</span><span>${esc(tx.note || 'Không ghi chú')}</span>
+          <div class="sub"><span class="mono">#${tx.id.slice(0, 8)}</span><span>${esc(tx.note || 'Không ghi chú')}</span>${tx.signature ? '<span class="chip ok">✍ Đã ký bằng MetaMask</span>' : ''}
             <span>${fmtTime(tx.time)}</span><button class="remove" data-cancel="${tx.id}">Huỷ</button></div>
         </div>`).join('')
       : '<div class="empty">Mempool trống. Hãy tạo giao dịch mới.</div>';
@@ -306,16 +306,38 @@
       $('#tx-amount').value = b.dataset.amt === 'max' ? Math.max(0, bc.availableOf(fromSel.value)) : b.dataset.amt;
     }));
 
-    $('#form-tx').addEventListener('submit', (e) => {
+    $('#form-tx').addEventListener('submit', async (e) => {
       e.preventDefault();
+      const btn = $('#form-tx button[type=submit]');
+      const chain = bc;
+      let tx = null;
       try {
-        bc.addTransaction(fromSel.value, $('#tx-to').value, $('#tx-amount').value, $('#tx-note').value);
+        tx = chain.addTransaction(fromSel.value, $('#tx-to').value, $('#tx-amount').value, $('#tx-note').value);
+        const sender = chain.wallets.find((w) => w.address === tx.from);
+        if (sender && sender.metamask) {
+          // Ví MetaMask: rút giao dịch khỏi mempool cho tới khi người dùng ký xong
+          chain.pending = chain.pending.filter((t) => t !== tx);
+          if (!window.MetaMaskUI) throw new Error('Không tải được mô-đun MetaMask.');
+          $('#tx-error').textContent = '';
+          btn.disabled = true;
+          btn.textContent = 'Đang chờ ký trong MetaMask…';
+          const signed = await window.MetaMaskUI.signTransaction(tx);
+          if (chain !== bc) throw new Error('Dữ liệu đã được đặt lại trong lúc ký.');
+          if (tx.amount > chain.availableOf(tx.from)) throw new Error('Số dư khả dụng không còn đủ.');
+          tx.signature = signed.signature;
+          tx.signedMessage = signed.message;
+          chain.pending.push(tx);
+        }
         save();
-        ui.prefillFrom = fromSel.value;
-        toast('Đã thêm giao dịch vào mempool.', 'ok');
+        ui.prefillFrom = tx.from;
+        toast(tx.signature ? 'Đã ký bằng MetaMask và thêm giao dịch vào mempool.' : 'Đã thêm giao dịch vào mempool.', 'ok');
         render();
       } catch (err) {
-        $('#tx-error').textContent = err.message;
+        if (tx) chain.pending = chain.pending.filter((t) => t !== tx);
+        btn.disabled = false;
+        btn.textContent = 'Gửi vào mempool';
+        const errEl = $('#tx-error');
+        if (errEl) errEl.textContent = err.message;
       }
     });
 
@@ -450,7 +472,7 @@
     const txRows = b.transactions.map((tx, ti) => `<tr>
         <td class="mono muted">${tx.id.slice(0, 8)}</td>
         <td>${who(tx.from)}</td><td>${who(tx.to)}</td>
-        <td class="muted">${esc(tx.note || '—')}</td>
+        <td class="muted">${esc(tx.note || '—')}${tx.signature ? ' <span class="chip ok" title="Đã ký bằng MetaMask">✍ Đã ký</span>' : ''}</td>
         <td class="amt">${ui.tamper
           ? `<input class="tamper-input" type="number" step="any" value="${tx.amount}" data-tamper="${b.index}:${ti}">`
           : fmtAmt(tx.amount)}</td></tr>`).join('');
@@ -618,6 +640,11 @@
     toast('Đã đặt lại dữ liệu mẫu.', 'ok');
     go('dashboard');
   });
+
+  // Đăng ký màn hình "Ví MetaMask" (js/metamask.js)
+  if (window.MetaMaskUI) {
+    window.MetaMaskUI.install({ VIEWS: VIEWS, getBc: () => bc, save: save, render: render, toast: toast, go: go, esc: esc, fmtNum: fmtNum, ui: ui });
+  }
 
   render();
 })();
