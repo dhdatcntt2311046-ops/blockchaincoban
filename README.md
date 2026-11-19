@@ -1,6 +1,21 @@
 # MiniChain – Ứng dụng Blockchain cơ bản
 
-Giao diện web mô phỏng một blockchain đơn giản cho môn **Blockchain**: ví, giao dịch, đào block bằng Proof-of-Work và khám phá chuỗi khối.
+Giao diện web mô phỏng một blockchain đơn giản cho môn **Blockchain**: ví, giao dịch, đào block bằng Proof-of-Work, khám phá chuỗi khối và kết nối ví MetaMask.
+
+- **Demo trực tuyến:** https://dhdatcntt2311046-ops.github.io/minichain/
+- **Mã nguồn:** https://github.com/dhdatcntt2311046-ops/minichain
+- **Hướng dẫn sử dụng:** [docs/huong-dan-su-dung.md](docs/huong-dan-su-dung.md)
+- **Kiến trúc & thiết kế:** [docs/kien-truc.md](docs/kien-truc.md)
+
+## Thông tin dự án
+
+| | |
+|---|---|
+| Môn học | Blockchain |
+| Đề tài | MiniChain – Ứng dụng Blockchain cơ bản |
+| Sinh viên thực hiện | **Đoàn Huy Đạt** |
+| MSSV | **CNTT2311046** |
+| Hình thức | Cá nhân (một thành viên) |
 
 ## Cách chạy
 
@@ -16,9 +31,9 @@ Dữ liệu được lưu trong `localStorage` của trình duyệt. Bấm **Đ�
 | Ví | Danh sách ví (địa chỉ sinh từ SHA-256), số dư, tạo ví mới |
 | Giao dịch | Tạo giao dịch (kiểm tra số dư khả dụng), mempool, lịch sử giao dịch đã xác nhận |
 | Đào block | Chọn thợ đào và độ khó (1–5), xem nonce/hash/tốc độ đào theo thời gian thực |
-| Khám phá chuỗi | Xem từng block và liên kết `previousHash`, tìm kiếm, chế độ thử sửa dữ liệu, đào lại block |
+| Khám phá chuỗi | Xem từng block và liên kết `previousHash`, tìm kiếm, chế độ thử sửa dữ liệu, đào lại block, tải chuỗi về dạng JSON |
 | Ví MetaMask | Kết nối MetaMask, xem địa chỉ/mạng/số dư ETH, ký thông điệp, liên kết ví vào MiniChain, gửi ETH trên testnet |
-| Hướng dẫn | Giải thích khái niệm, thử hàm băm SHA-256, kịch bản demo |
+| Hướng dẫn | Giải thích khái niệm (hash, block, PoW, chuỗi liên kết, mempool, chữ ký số), thử hàm băm SHA-256, kịch bản demo |
 
 ## Khái niệm được minh hoạ
 
@@ -29,7 +44,7 @@ Dữ liệu được lưu trong `localStorage` của trình duyệt. Bấm **Đ�
 
 ## Kết nối MetaMask
 
-MetaMask chỉ hoạt động khi ứng dụng được mở qua web (http/https), không hoạt động khi mở file `index.html` trực tiếp. Dùng link GitHub Pages: https://dhdatcntt2311046-ops.github.io/blockchaincoban/
+MetaMask chỉ hoạt động khi ứng dụng được mở qua web (http/https), không hoạt động khi mở file `index.html` trực tiếp. Dùng link GitHub Pages: https://dhdatcntt2311046-ops.github.io/minichain/
 
 1. Cài tiện ích MetaMask cho trình duyệt (trên điện thoại: mở link trong ứng dụng MetaMask).
 2. Vào màn hình **Ví MetaMask** → bấm **Kết nối MetaMask** và xác nhận trong cửa sổ MetaMask.
@@ -42,13 +57,16 @@ MetaMask chỉ hoạt động khi ứng dụng được mở qua web (http/https
 ## Cấu trúc thư mục
 
 ```
-blockchaincoban/
+minichain/
 ├── index.html          # Khung giao diện, thanh điều hướng
 ├── css/style.css       # Toàn bộ giao diện (dark theme, responsive)
 ├── js/sha256.js        # Hàm băm SHA-256
 ├── js/blockchain.js    # Lõi blockchain: giao dịch, block, đào, kiểm tra chuỗi
 ├── js/metamask.js      # Kết nối ví MetaMask (EIP-1193, EIP-6963)
-└── js/app.js           # Điều khiển giao diện các màn hình
+├── js/app.js           # Điều khiển giao diện các màn hình
+└── docs/
+    ├── huong-dan-su-dung.md  # Hướng dẫn sử dụng chi tiết
+    └── kien-truc.md          # Kiến trúc, mô hình dữ liệu, thuật toán
 ```
 
 ## Kịch bản demo
