@@ -24,7 +24,7 @@ MiniChain là ứng dụng web mô phỏng một **blockchain cơ bản**, xây 
 - **Thanh trên cùng**:
   - Nút **Kết nối MetaMask**. Khi đã kết nối, nút hiện địa chỉ ví rút gọn.
   - Nhãn trạng thái **Chuỗi hợp lệ** (xanh) hoặc **Chuỗi bị sửa đổi** (đỏ).
-  - Nút **Đặt lại dữ liệu**: xoá toàn bộ và tạo lại dữ liệu mẫu.
+  - Nút **Đặt lại dữ liệu** (chỉ hiện khi đăng nhập quản trị viên): xoá toàn bộ và tạo lại dữ liệu mẫu.
 
 ## 3. Dữ liệu mẫu ban đầu
 
@@ -48,7 +48,7 @@ Gửi MC và đào block đều cần **đăng nhập vào ví** – ứng dụn
   - **Khoá bí mật**: dán khoá 64 ký tự hex được cấp khi tạo ví. Ứng dụng tính lại địa chỉ từ khoá rồi tìm ví khớp; khoá không bị lưu.
   - **MetaMask**: MetaMask yêu cầu ký một thông điệp đăng nhập (không tốn phí). Nếu địa chỉ chưa có trong MiniChain, ví được tự thêm vào.
 - Sau khi đăng nhập, nút trên thanh trên cùng hiện tên ví. Bấm vào để xem số dư, sao chép địa chỉ hoặc **Đăng xuất**.
-- Phiên đăng nhập được giữ khi tải lại trang. Đổi tài khoản trong MetaMask sẽ tự đăng xuất ví MetaMask. **Đặt lại dữ liệu** cũng đăng xuất.
+- Phiên đăng nhập được giữ khi tải lại trang. Đổi tài khoản trong MetaMask sẽ tự đăng xuất ví MetaMask. Ví bị quản trị viên khoá sẽ bị đăng xuất và không đăng nhập lại được.
 - Sai mật khẩu, khoá sai định dạng hoặc không khớp ví nào đều được báo lỗi rõ ràng.
 
 ### 4.1. Tổng quan
@@ -132,8 +132,21 @@ Chỉ hoạt động khi mở ứng dụng qua link web và trình duyệt đã 
 
 > MiniChain **không bao giờ** hỏi cụm từ khôi phục (seed phrase) hay khoá bí mật. Mọi thao tác ký đều do bạn xác nhận trong MetaMask.
 
-### 4.7. Hướng dẫn
-- Giải thích 9 khái niệm: hàm băm, block & Merkle root, Proof-of-Work, phần thưởng – phí – halving, độ khó tự điều chỉnh, chuỗi liên kết, mempool & xác nhận, đăng nhập ví, ví MetaMask & chữ ký số.
+### 4.7. Quản trị (chỉ quản trị viên)
+Đăng nhập: bấm **Đăng nhập ví** → thẻ **Quản trị**, tài khoản mặc định `admin` / `admin123`. Sau khi đăng nhập, menu **Quản trị** và nút **Đặt lại dữ liệu** mới hiện ra; người dùng thường không thấy hai mục này. Quản trị viên không có ví nên không gửi MC hay đào block.
+
+- **Quản lý ví** (bảng mọi ví, số dư, trạng thái):
+  - **Khoá / Mở khoá**: ví bị khoá không đăng nhập, gửi MC hay đào block được (vẫn nhận MC); các giao dịch đang chờ của ví bị huỷ.
+  - **Đặt lại mật khẩu**: đặt mật khẩu mới khi chủ ví quên (khoá bí mật không đổi). Không áp dụng cho ví MetaMask.
+  - **+ Cấp MC**: tạo giao dịch phát hành từ "Hệ thống" (tối đa 10.000 MC/lần). Giao dịch được ưu tiên vào block kế tiếp; ví nhận MC sau khi block đó được đào.
+- **Luật mạng**: đổi phần thưởng ban đầu, chu kỳ halving, số giao dịch tối đa mỗi block, thời gian mục tiêu, chu kỳ chỉnh độ khó, độ khó tối thiểu/tối đa và độ khó hiện tại. Luật mới **chỉ áp dụng từ block kế tiếp**; các block cũ vẫn được kiểm tra theo luật lúc chúng được đào (giống một lần nâng cấp mạng). Bảng **Lịch sử phiên bản luật** ghi lại từng lần đổi.
+- **Mempool**: xoá bất kỳ giao dịch đang chờ nào (trừ giao dịch đang được đào).
+- **Đổi mật khẩu quản trị** (ít nhất 6 ký tự).
+- **Đặt lại dữ liệu**: xoá mọi ví, block, giao dịch, nhật ký và tạo lại chuỗi mẫu; mật khẩu quản trị trở về mặc định.
+- **Nhật ký quản trị**: 50 thao tác gần nhất kèm thời gian.
+
+### 4.8. Hướng dẫn
+- Giải thích 10 khái niệm: hàm băm, block & Merkle root, Proof-of-Work, phần thưởng – phí – halving, độ khó tự điều chỉnh, chuỗi liên kết, mempool & xác nhận, quản trị viên, đăng nhập ví, ví MetaMask & chữ ký số.
 - Ô **Thử hàm băm SHA-256**: gõ nội dung để thấy hash thay đổi hoàn toàn khi chỉ đổi 1 ký tự.
 - Các bước kịch bản demo.
 
@@ -149,12 +162,13 @@ Chỉ hoạt động khi mở ứng dụng qua link web và trình duyệt đã 
 6. Bật **Chế độ thử sửa dữ liệu**, đổi số tiền trong block #1: Merkle root lệch, block chuyển đỏ, nhãn trên cùng báo "Chuỗi bị sửa đổi", trang Đào block bị khoá.
 7. Bấm **Đào lại** block #1: block #2 đứt liên kết. Kết luận: muốn gian lận phải đào lại cả chuỗi.
 8. **Ví MetaMask**: đăng nhập bằng MetaMask (ký thông điệp đăng nhập), đào 1 block, rồi gửi MC. MetaMask hiện yêu cầu ký, giao dịch có nhãn "Đã ký".
-9. Bấm **Đặt lại dữ liệu** để quay về trạng thái ban đầu.
+9. Đăng nhập **Quản trị** (`admin` / `admin123`): khoá một ví rồi thử đăng nhập ví đó; cấp MC cho một ví; đổi phần thưởng và chỉ ra block cũ vẫn hợp lệ.
+10. Bấm **Đặt lại dữ liệu** (đang đăng nhập quản trị) để quay về trạng thái ban đầu.
 
 ## 6. Lưu trữ và đặt lại dữ liệu
 
 - Dữ liệu lưu trong bộ nhớ trình duyệt (`localStorage`), nên tải lại trang vẫn giữ nguyên. Mỗi trình duyệt (hoặc mỗi máy) có dữ liệu riêng.
-- **Đặt lại dữ liệu** xoá chuỗi hiện tại và tạo lại dữ liệu mẫu.
+- **Đặt lại dữ liệu** (chỉ quản trị viên) xoá chuỗi hiện tại và tạo lại dữ liệu mẫu.
 - Nếu dữ liệu lưu bị hỏng, ứng dụng tự tạo lại dữ liệu mẫu.
 
 ## 7. Xử lý sự cố
@@ -166,5 +180,7 @@ Chỉ hoạt động khi mở ứng dụng qua link web và trình duyệt đã 
 | "MetaMask đang có một yêu cầu chờ xử lý" | Mở biểu tượng MetaMask trên trình duyệt và xử lý yêu cầu đang chờ. |
 | "Hãy chuyển sang 0x… để ký" khi gửi MC | Trong MetaMask, chọn đúng tài khoản đã liên kết với ví MiniChain. |
 | Không gửi được ETH | Chức năng chỉ bật trên mạng thử nghiệm. Bấm **Chuyển sang Sepolia**. |
-| Nhãn "Chuỗi bị sửa đổi", không đào được | Vào Khám phá chuỗi, **Đào lại** lần lượt các block đỏ, hoặc bấm **Đặt lại dữ liệu**. |
+| Nhãn "Chuỗi bị sửa đổi", không đào được | Vào Khám phá chuỗi, **Đào lại** lần lượt các block đỏ, hoặc nhờ quản trị viên **Đặt lại dữ liệu**. Nếu lý do là "luật số dư" thì đào lại không sửa được – phải đặt lại dữ liệu. |
+| "Ví này đã bị quản trị viên khoá" | Đăng nhập quản trị → Quản trị → **Mở khoá** ví đó. |
+| Không thấy menu Quản trị / nút Đặt lại dữ liệu | Hai mục này chỉ hiện khi đăng nhập bằng thẻ **Quản trị** (`admin` / `admin123`). |
 | Trang hiển thị bản cũ sau khi cập nhật | Nhấn `Ctrl + F5` (Windows) hoặc `Cmd + Shift + R` (macOS) để tải lại hoàn toàn. |

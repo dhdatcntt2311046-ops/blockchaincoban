@@ -21,9 +21,11 @@ Giao diện web mô phỏng một blockchain đơn giản cho môn **Blockchain*
 
 Không cần cài đặt gì. Mở file `index.html` bằng trình duyệt (Chrome, Edge, Firefox).
 
-Dữ liệu được lưu trong `localStorage` của trình duyệt. Bấm **Đặt lại dữ liệu** để tạo lại chuỗi mẫu.
+Dữ liệu được lưu trong `localStorage` của trình duyệt. Quản trị viên có nút **Đặt lại dữ liệu** để tạo lại chuỗi mẫu.
 
 **Đăng nhập ví:** bấm **Đăng nhập ví** ở thanh trên cùng. Ví mẫu An, Bình, Chi, Dũng có mật khẩu `123456`. Có thể tạo ví mới (đặt mật khẩu, nhận khoá bí mật) hoặc đăng nhập bằng MetaMask.
+
+**Quản trị viên:** trong hộp thoại đăng nhập chọn thẻ **Quản trị**, tài khoản mặc định `admin` / `admin123` (nên đổi mật khẩu sau khi đăng nhập).
 
 ## Các màn hình
 
@@ -36,6 +38,7 @@ Dữ liệu được lưu trong `localStorage` của trình duyệt. Bấm **Đ�
 | Đào block | Ví đang đăng nhập đào block: độ khó do mạng tự điều chỉnh, thưởng + phí, halving, giới hạn 4 GD/block, tiêu đề block (Merkle root), tốc độ băm, lịch sử đào |
 | Khám phá chuỗi | Xem từng block và liên kết `previousHash`, tìm kiếm, chế độ thử sửa dữ liệu, đào lại block, tải chuỗi về dạng JSON |
 | Ví MetaMask | Kết nối MetaMask, xem địa chỉ/mạng/số dư ETH, ký thông điệp, liên kết ví vào MiniChain, gửi ETH trên testnet |
+| Quản trị *(chỉ admin)* | Khoá / mở khoá ví, đặt lại mật khẩu ví, cấp MC; đổi luật mạng (có hiệu lực từ block kế tiếp, lưu lịch sử phiên bản); xoá giao dịch trong mempool; đổi mật khẩu quản trị; đặt lại dữ liệu; nhật ký quản trị |
 | Hướng dẫn | Giải thích khái niệm (hash, block, PoW, chuỗi liên kết, mempool, chữ ký số), thử hàm băm SHA-256, kịch bản demo |
 
 ## Khái niệm được minh hoạ
@@ -47,6 +50,8 @@ Dữ liệu được lưu trong `localStorage` của trình duyệt. Bấm **Đ�
 - **Proof-of-Work**: tìm `nonce` sao cho hash bắt đầu bằng `difficulty` số 0 (trung bình 16^d lần thử).
 - **Luật mạng** (thu nhỏ từ Bitcoin): phần thưởng 50 MC, giảm một nửa sau mỗi 10 block (halving); tối đa 4 giao dịch/block, ưu tiên phí cao; coinbase = thưởng + tổng phí; cứ 3 block điều chỉnh độ khó (3–5) để giữ ~5 giây/block.
 - **Xác nhận**: số block đã xây sau block chứa giao dịch; từ 6 xác nhận coi như chắc chắn.
+- **Kiểm tra chuỗi**: Merkle root + hash, độ khó, liên kết `previousHash`, luật coinbase, và luật số dư (không ví nào chi quá số MC đang có).
+- **Quản trị viên**: blockchain công khai thật không có admin; MiniChain thêm vai trò này để quản lý bản demo, mô phỏng chuỗi có cấp phép và việc nâng cấp luật mạng.
 - **Tính bất biến**: sửa dữ liệu một block làm hash thay đổi → block đó và các block phía sau mất hiệu lực.
 
 ## Kết nối MetaMask

@@ -48,7 +48,24 @@ Thứ tự nạp script: `sha256.js → blockchain.js → metamask.js → app.js
 | Khoá bí mật | khoá đúng 64 hex → tính lại địa chỉ từ khoá → phải trùng một ví |
 | MetaMask | `personal_sign` thông điệp đăng nhập (có thời gian + mã ngẫu nhiên) bằng đúng tài khoản; chưa có ví thì tự thêm |
 
-Phiên đăng nhập là địa chỉ ví lưu ở `localStorage["minichain.session"]`. Gửi giao dịch, huỷ giao dịch và đào block đều dùng ví của phiên này.
+Phiên đăng nhập là địa chỉ ví (hoặc chữ `admin`) lưu ở `localStorage["minichain.session"]`. Gửi giao dịch, huỷ giao dịch và đào block đều dùng ví của phiên này. Ví bị khoá (`"locked": true`) không đăng nhập được.
+
+### Quản trị viên
+```json
+"admin": { "username": "admin", "salt": "…", "pwHash": "…" },
+"adminLog": [ { "time": 1795000000000, "action": "Khoá ví \"Bình\"" } ],
+"ruleHistory": [ { "from": 0, "rules": { …RULES } }, { "from": 8, "rules": { … }, "time": … } ]
+```
+| Hàm (`Blockchain`) | Chức năng |
+|---|---|
+| `loginAdmin(user, pw)` / `changeAdminPassword(old, new, confirm)` | Đăng nhập / đổi mật khẩu quản trị (mặc định `admin` / `admin123`, lưu dạng băm có muối) |
+| `setWalletLocked(addr, locked)` | Khoá ví (huỷ giao dịch chờ của ví) hoặc mở khoá |
+| `resetWalletPassword(addr, pw, confirm)` | Đặt mật khẩu mới cho ví |
+| `mint(addr, amount, note)` | Giao dịch phát hành `SYSTEM → ví` có `"mint": true`, ưu tiên vào block kế tiếp |
+| `removePending(id)` | Xoá giao dịch khỏi mempool |
+| `updateRules(changes, difficulty)` | Thêm phiên bản luật mới có hiệu lực từ block kế tiếp; `rulesAt(h)` trả về luật áp dụng cho block `h` |
+
+Mọi thao tác quản trị được ghi vào `adminLog` (50 mục gần nhất).
 
 ### Giao dịch
 ```json
@@ -123,11 +140,12 @@ lặp:
 - **Điều chỉnh độ khó** (`retarget`, chạy sau khi thêm block có độ cao chia hết cho 3): lấy trung bình `minedIn` của 3 block gần nhất; < 2,5 giây → độ khó +1, > 10 giây → độ khó −1, giới hạn 3–5.
 
 ### 4.3. Kiểm tra tính hợp lệ của chuỗi
-Block thứ *i* hợp lệ khi thoả cả 4 điều kiện:
+Block thứ *i* hợp lệ khi thoả cả 5 điều kiện:
 1. **Dữ liệu nguyên vẹn**: Merkle root tính lại từ giao dịch bằng `block.merkleRoot`, và `calcHash(block) === block.hash`.
 2. **Đạt độ khó**: `block.hash` bắt đầu bằng `block.difficulty` chữ số 0.
 3. **Liên kết đúng**: `block.previousHash === chain[i-1].hash` (block genesis có `previousHash` là 64 chữ số 0).
-4. **Đúng luật đồng thuận**: coinbase không vượt `rewardAt(i) + tổng phí`, chỉ coinbase được từ `SYSTEM`, tối đa 4 giao dịch người dùng.
+4. **Đúng luật đồng thuận** (theo `rulesAt(i)`): coinbase không vượt phần thưởng + tổng phí, ngoài coinbase chỉ giao dịch cấp phát (`mint`) được từ `SYSTEM`, không quá `maxTxPerBlock` giao dịch.
+5. **Luật số dư**: cộng dồn số dư từ block #0, không ví nào chi (số tiền + phí) nhiều hơn số MC đang có. Nhờ đó, sửa một giao dịch thành số tiền vượt số dư rồi đào lại toàn bộ chuỗi vẫn bị phát hiện.
 
 Chuỗi hợp lệ khi mọi block hợp lệ. Khi chuỗi không hợp lệ, ứng dụng khoá chức năng đào.
 
