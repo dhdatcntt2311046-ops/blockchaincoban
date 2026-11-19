@@ -23,8 +23,19 @@
     adjustInterval: 3,      // cứ 3 block điều chỉnh độ khó một lần (Bitcoin: 2016 block)
     minDifficulty: 3,
     maxDifficulty: 5,
-    defaultFee: 0.1         // phí giao dịch đề xuất (MC)
+    defaultFee: 0.1,        // phí giao dịch đề xuất (MC)
+    // Điều kiện để được đào block
+    minTxToMine: 1,         // mempool phải có ít nhất 1 giao dịch (không đào block rỗng chỉ để lấy thưởng)
+    minMinerBalance: 10,    // ví thợ đào phải có ít nhất 10 MC đã xác nhận (tiền đặt cọc)
+    maxConsecutiveBlocks: 3 // một ví không được đào quá 3 block liên tiếp
   };
+  // Các gói tiết kiệm: khoá MC trong số block nhất định để nhận lãi
+  const STAKE_PLANS = [
+    { blocks: 5, rate: 0.02, name: 'Ngắn hạn' },
+    { blocks: 10, rate: 0.05, name: 'Trung hạn' },
+    { blocks: 20, rate: 0.12, name: 'Dài hạn' }
+  ];
+  const FIAT = { VND: { digits: 0, symbol: '₫' }, USD: { digits: 2, symbol: '$' } };
   const round = (n) => Math.round(Number(n) * 1e8) / 1e8;
 
   function uid() {
@@ -175,6 +186,14 @@
       this.reward = RULES.initialReward;
       this.ruleHistory = [{ from: 0, rules: Object.assign({}, RULES) }];  // luật mạng theo từng phiên bản
       this.adminLog = [];
+      // Dịch vụ dùng MC
+      this.products = [];      // cửa hàng
+      this.orders = [];        // đơn mua hàng
+      this.invoices = [];      // hoá đơn / yêu cầu thanh toán
+      this.fx = { rates: { VND: 23500, USD: 1 }, spread: 0.01 };  // tỷ giá 1 MC = ? VND / USD, chênh lệch mua-bán
+      this.fiat = {};          // tài khoản VND/USD mô phỏng của từng ví (ngoài chuỗi)
+      this.fxOrders = [];      // lệnh đổi tiền
+      this.stakes = [];        // khoản gửi tiết kiệm
       if (data) Object.assign(this, data);
       if (!this.admin) this.admin = makeAdmin(ADMIN_PASSWORD);
     }
@@ -188,11 +207,17 @@
       const bc = new Blockchain();
       ['An', 'Bình', 'Chi', 'Dũng'].forEach(function (n) { bc.wallets.push(makeWallet(n, DEMO_PASSWORD).wallet); });
       const [an, binh, chi, dung] = bc.wallets;
+      // Ví hệ thống: không đăng nhập được, do app vận hành
+      const exchange = { name: 'Quầy đổi tiền', address: addressFromKey(randomHex(32)), system: 'exchange', created: Date.now() };
+      const pool = { name: 'Quỹ tiết kiệm', address: addressFromKey(randomHex(32)), system: 'staking', created: Date.now() };
+      bc.wallets.push(exchange, pool);
+      const grant = function (w, amount, note) { const t = makeTx(SYSTEM, w.address, amount, note); t.reward = amount; return t; };
 
       const genesis = {
         index: 0,
         timestamp: Date.now(),
-        transactions: bc.wallets.map(function (w) { const t = makeTx(SYSTEM, w.address, 100, 'Cấp vốn ban đầu'); t.reward = 100; return t; }),
+        transactions: [an, binh, chi, dung].map(function (w) { return grant(w, 100, 'Cấp vốn ban đầu'); })
+          .concat([grant(exchange, 1000, 'Dự trữ của quầy đổi tiền'), grant(pool, 500, 'Dự trữ trả lãi của quỹ tiết kiệm')]),
         previousHash: ZERO_HASH,
         nonce: 0,
         hash: '',
@@ -223,6 +248,13 @@
       bc.pending.push(makeTx(binh.address, an.address, 5, 'Tiền cà phê', 0.1));
       bc.pending.push(makeTx(chi.address, dung.address, 12, 'Mua sách', 0.5));
       bc.reward = bc.rewardAt(2);
+      [an, binh, chi, dung].forEach(function (w) { bc.fiat[w.address] = { VND: 1000000, USD: 50 }; });
+      [
+        [chi, '📘', 'Sách "Blockchain cơ bản"', 'Sách nhập môn về hash, block và Proof-of-Work.', 20, 5],
+        [chi, '👕', 'Áo thun MiniChain', 'Áo cotton in logo MiniChain, size M.', 35, 3],
+        [dung, '☕', 'Cà phê sữa', 'Một ly cà phê sữa đá.', 5, 20],
+        [dung, '🎓', 'Khoá học Solidity', 'Khoá học trực tuyến viết hợp đồng thông minh.', 60, 2]
+      ].forEach(function (p) { bc.products.push({ id: uid().slice(0, 10), seller: p[0].address, icon: p[1], name: p[2], desc: p[3], price: p[4], stock: p[5], active: true, created: Date.now() }); });
       return bc;
     }
 
@@ -360,9 +392,11 @@
       const w = this.walletOrThrow(address);
       w.locked = !!locked;
       if (locked) {
-        const before = this.pending.length;
-        this.pending = this.pending.filter(function (tx) { return tx.from !== address; });
-        this.log('Khoá ví "' + w.name + '"' + (before > this.pending.length ? ', huỷ ' + (before - this.pending.length) + ' giao dịch chờ' : ''));
+        if (w.system) throw new Error('Không khoá ví hệ thống.');
+        const mine = this.pending.filter(function (tx) { return tx.from === address; });
+        const self = this;
+        mine.forEach(function (tx) { self.dropPending(tx); });
+        this.log('Khoá ví "' + w.name + '"' + (mine.length ? ', huỷ ' + mine.length + ' giao dịch chờ' : ''));
       } else {
         this.log('Mở khoá ví "' + w.name + '"');
       }
@@ -399,7 +433,7 @@
     removePending(id) {
       const tx = this.pending.find(function (t) { return t.id === id; });
       if (!tx) throw new Error('Giao dịch không còn trong mempool.');
-      this.pending = this.pending.filter(function (t) { return t !== tx; });
+      this.dropPending(tx);
       this.log('Xoá giao dịch ' + id.slice(0, 8) + ' (' + this.nameOf(tx.from) + ' → ' + this.nameOf(tx.to) + ', ' + tx.amount + ' MC) khỏi mempool');
       return tx;
     }
@@ -424,8 +458,12 @@
       num('adjustInterval', 1, 100, 'Chu kỳ chỉnh độ khó');
       num('minDifficulty', 1, 5, 'Độ khó tối thiểu');
       num('maxDifficulty', 1, 5, 'Độ khó tối đa');
+      num('minTxToMine', 0, 20, 'Số giao dịch tối thiểu để đào');
+      num('minMinerBalance', 0, 100000, 'Số dư tối thiểu của thợ đào');
+      num('maxConsecutiveBlocks', 1, 1000, 'Số block liên tiếp tối đa');
       next.initialReward = round(next.initialReward);
-      ['halvingInterval', 'maxTxPerBlock', 'adjustInterval', 'minDifficulty', 'maxDifficulty'].forEach(function (k) { next[k] = Math.round(next[k]); });
+      ['halvingInterval', 'maxTxPerBlock', 'adjustInterval', 'minDifficulty', 'maxDifficulty', 'minTxToMine', 'maxConsecutiveBlocks'].forEach(function (k) { next[k] = Math.round(next[k]); });
+      next.minMinerBalance = round(next.minMinerBalance);
       if (next.minDifficulty > next.maxDifficulty) throw new Error('Độ khó tối thiểu không được lớn hơn độ khó tối đa.');
       let d = difficulty === undefined || difficulty === '' ? this.difficulty : Math.round(Number(difficulty));
       if (!isFinite(d) || d < next.minDifficulty || d > next.maxDifficulty) {
@@ -435,7 +473,8 @@
       const LABEL = { initialReward: 'thưởng ' + next.initialReward + ' MC', halvingInterval: 'halving mỗi ' + next.halvingInterval + ' block',
         maxTxPerBlock: 'tối đa ' + next.maxTxPerBlock + ' GD/block', targetBlockMs: 'mục tiêu ' + next.targetBlockMs / 1000 + ' giây/block',
         adjustInterval: 'chỉnh độ khó mỗi ' + next.adjustInterval + ' block', minDifficulty: 'độ khó tối thiểu ' + next.minDifficulty,
-        maxDifficulty: 'độ khó tối đa ' + next.maxDifficulty };
+        maxDifficulty: 'độ khó tối đa ' + next.maxDifficulty, minTxToMine: 'đào khi có ≥ ' + next.minTxToMine + ' giao dịch',
+        minMinerBalance: 'thợ đào cần ≥ ' + next.minMinerBalance + ' MC', maxConsecutiveBlocks: 'tối đa ' + next.maxConsecutiveBlocks + ' block liên tiếp' };
       if (!changed.length && d === this.difficulty) throw new Error('Không có thay đổi nào.');
       const from = this.latest.index + 1;
       if (changed.length) {
@@ -475,6 +514,7 @@
       const w = this.findWallet(nameOrAddress);
       if (!w) throw new Error('Không tìm thấy ví có tên hoặc địa chỉ này.');
       if (w.metamask) throw new Error('Ví này liên kết với MetaMask – hãy đăng nhập bằng MetaMask.');
+      if (w.system) throw new Error('"' + w.name + '" là ví hệ thống, không đăng nhập được.');
       if (!w.pwHash || hashPassword(w.salt, password) !== w.pwHash) throw new Error('Mật khẩu không đúng.');
       if (w.locked) throw new Error('Ví này đã bị quản trị viên khoá.');
       return w;
@@ -491,9 +531,11 @@
       return w;
     }
 
-    addTransaction(from, to, amount, note, fee) {
+    addTransaction(from, to, amount, note, fee, extra) {
       const sender = this.wallets.find(function (w) { return w.address === from; });
       if (sender && sender.locked) throw new Error('Ví gửi đã bị quản trị viên khoá.');
+      const receiver = this.wallets.find(function (w) { return w.address === to; });
+      if (receiver && receiver.system && !extra) throw new Error('Không gửi trực tiếp vào ví hệ thống – hãy dùng chức năng Đổi tiền hoặc Tiết kiệm.');
       amount = Number(amount);
       fee = fee === undefined || fee === '' ? RULES.defaultFee : Number(fee);
       if (!from || !to) throw new Error('Vui lòng chọn ví gửi và ví nhận.');
@@ -506,8 +548,271 @@
         throw new Error('Số dư khả dụng không đủ cho số tiền + phí (còn ' + Math.round(available * 10000) / 10000 + ' MC).');
       }
       const tx = makeTx(from, to, amount, String(note || '').trim().slice(0, 60), fee);
+      if (extra) Object.assign(tx, extra);
       this.pending.push(tx);
       return tx;
+    }
+
+    /** Trạng thái của một giao dịch: đang chờ, đã xác nhận (ở block nào), hoặc đã bị huỷ. */
+    txState(id) {
+      if (!id) return { status: 'none' };
+      if (this.pending.some(function (t) { return t.id === id; })) return { status: 'pending' };
+      for (const b of this.chain) {
+        if (b.transactions.some(function (t) { return t.id === id; })) return { status: 'confirmed', block: b.index, confirmations: this.confirmationsOf(b.index) };
+      }
+      return { status: 'dropped' };
+    }
+
+    /** Bỏ một giao dịch khỏi mempool và hoàn tác các tác dụng phụ (tồn kho, hoá đơn, tiền VND/USD, khoản tiết kiệm). */
+    dropPending(tx) {
+      this.pending = this.pending.filter(function (t) { return t !== tx; });
+      const self = this;
+      this.orders.forEach(function (o) {
+        if (o.txId === tx.id && !o.cancelled) {
+          o.cancelled = true;
+          const p = self.products.find(function (x) { return x.id === o.productId; });
+          if (p) p.stock += o.qty;
+        }
+      });
+      this.invoices.forEach(function (inv) {
+        if (inv.txId === tx.id) { inv.status = 'open'; inv.txId = null; inv.paidBy = null; }
+      });
+      this.fxOrders.forEach(function (o) {
+        if (o.txId === tx.id && o.status === 'pending') {
+          o.status = 'cancelled';
+          if (o.dir === 'buy') self.addFiat(o.owner, o.currency, o.fiat);   // hoàn lại tiền VND/USD
+        }
+      });
+      this.stakes.forEach(function (st) {
+        if (st.txId === tx.id) st.status = 'cancelled';
+        if (st.withdrawTxId === tx.id) { st.withdrawTxId = null; st.early = false; }
+      });
+    }
+
+    /** Chủ ví huỷ giao dịch đang chờ của mình. */
+    cancelPending(id, by) {
+      const tx = this.pending.find(function (t) { return t.id === id; });
+      if (!tx) throw new Error('Giao dịch không còn trong mempool.');
+      if (tx.from !== by) throw new Error('Bạn chỉ huỷ được giao dịch của chính mình.');
+      this.dropPending(tx);
+      return tx;
+    }
+
+    systemWallet(kind) {
+      return this.wallets.find(function (w) { return w.system === kind; }) || null;
+    }
+
+    // ---------- Cửa hàng ----------
+    addProduct(seller, p) {
+      const w = this.walletOrThrow(seller);
+      if (w.system) throw new Error('Ví hệ thống không bán hàng.');
+      const name = String(p.name || '').trim();
+      const price = round(p.price);
+      const stock = Math.round(Number(p.stock));
+      if (!name) throw new Error('Vui lòng nhập tên sản phẩm.');
+      if (name.length > 40) throw new Error('Tên sản phẩm tối đa 40 ký tự.');
+      if (!isFinite(price) || price <= 0 || price > 10000) throw new Error('Giá phải lớn hơn 0 và không quá 10.000 MC.');
+      if (!isFinite(stock) || stock < 1 || stock > 999) throw new Error('Số lượng phải từ 1 đến 999.');
+      const prod = { id: uid().slice(0, 10), seller: seller, icon: String(p.icon || '📦').slice(0, 4), name: name,
+        desc: String(p.desc || '').trim().slice(0, 100), price: price, stock: stock, active: true, created: Date.now() };
+      this.products.push(prod);
+      return prod;
+    }
+
+    removeProduct(seller, id) {
+      const p = this.products.find(function (x) { return x.id === id; });
+      if (!p) throw new Error('Không tìm thấy sản phẩm.');
+      if (p.seller !== seller) throw new Error('Bạn chỉ gỡ được sản phẩm của mình.');
+      p.active = false;
+      return p;
+    }
+
+    /** Mua hàng: tạo giao dịch người mua → người bán; người bán nhận MC khi giao dịch được đào vào block. */
+    buy(buyer, productId, qty, fee) {
+      const p = this.products.find(function (x) { return x.id === productId && x.active; });
+      if (!p) throw new Error('Sản phẩm không còn bán.');
+      qty = Math.round(Number(qty));
+      if (!isFinite(qty) || qty < 1) throw new Error('Số lượng phải từ 1 trở lên.');
+      if (qty > p.stock) throw new Error('Chỉ còn ' + p.stock + ' sản phẩm.');
+      if (buyer === p.seller) throw new Error('Không thể mua sản phẩm của chính mình.');
+      const total = round(p.price * qty);
+      const orderId = 'DH-' + uid().slice(0, 6).toUpperCase();
+      const tx = this.addTransaction(buyer, p.seller, total, 'Mua: ' + p.name.slice(0, 40) + ' ×' + qty, fee, { kind: 'purchase', ref: orderId });
+      p.stock -= qty;
+      const order = { id: orderId, txId: tx.id, productId: p.id, name: p.name, icon: p.icon, price: p.price, qty: qty, total: total, buyer: buyer, seller: p.seller, time: Date.now() };
+      this.orders.push(order);
+      return order;
+    }
+
+    // ---------- Hoá đơn / yêu cầu thanh toán ----------
+    createInvoice(payee, amount, note, payer) {
+      const w = this.walletOrThrow(payee);
+      if (w.system) throw new Error('Ví hệ thống không tạo hoá đơn.');
+      amount = round(amount);
+      if (!isFinite(amount) || amount <= 0 || amount > 100000) throw new Error('Số tiền hoá đơn phải lớn hơn 0.');
+      if (payer) {
+        const pw = this.walletOrThrow(payer);
+        if (pw.system || payer === payee) throw new Error('Người trả không hợp lệ.');
+      }
+      const inv = { id: 'HD-' + uid().slice(0, 6).toUpperCase(), payee: payee, payer: payer || null, amount: amount,
+        note: String(note || '').trim().slice(0, 60), created: Date.now(), status: 'open', txId: null, paidBy: null };
+      this.invoices.push(inv);
+      return inv;
+    }
+
+    findInvoice(id) {
+      const q = String(id || '').trim().toUpperCase();
+      return this.invoices.find(function (i) { return i.id === q; }) || null;
+    }
+
+    payInvoice(payer, id, fee) {
+      const inv = this.findInvoice(id);
+      if (!inv) throw new Error('Không tìm thấy hoá đơn có mã này.');
+      if (inv.status === 'cancelled') throw new Error('Hoá đơn đã bị huỷ.');
+      if (inv.status === 'paid') throw new Error('Hoá đơn đã được thanh toán.');
+      if (inv.payee === payer) throw new Error('Không thể tự trả hoá đơn của mình.');
+      if (inv.payer && inv.payer !== payer) throw new Error('Hoá đơn này dành cho ví khác.');
+      const tx = this.addTransaction(payer, inv.payee, inv.amount, 'Thanh toán ' + inv.id + (inv.note ? ': ' + inv.note : ''), fee, { kind: 'invoice', ref: inv.id });
+      inv.status = 'paid';
+      inv.txId = tx.id;
+      inv.paidBy = payer;
+      return inv;
+    }
+
+    cancelInvoice(payee, id) {
+      const inv = this.findInvoice(id);
+      if (!inv || inv.payee !== payee) throw new Error('Bạn chỉ huỷ được hoá đơn của mình.');
+      if (inv.status !== 'open') throw new Error('Chỉ huỷ được hoá đơn chưa thanh toán.');
+      inv.status = 'cancelled';
+      return inv;
+    }
+
+    // ---------- Đổi tiền MC ↔ VND / USD ----------
+    fiatOf(address) {
+      return this.fiat[address] || { VND: 0, USD: 0 };
+    }
+
+    addFiat(address, currency, amount) {
+      const acc = Object.assign({ VND: 0, USD: 0 }, this.fiat[address]);
+      const d = FIAT[currency].digits;
+      acc[currency] = Math.round((acc[currency] + amount) * Math.pow(10, d)) / Math.pow(10, d);
+      this.fiat[address] = acc;
+    }
+
+    /** Giá 1 MC: quầy mua MC của bạn rẻ hơn tỷ giá, bán MC cho bạn đắt hơn tỷ giá (chênh lệch = lợi nhuận của quầy). */
+    fxPrice(dir, currency) {
+      const r = this.fx.rates[currency];
+      return dir === 'sell' ? r * (1 - this.fx.spread) : r * (1 + this.fx.spread);
+    }
+
+    fxQuote(dir, currency, mc) {
+      if (!FIAT[currency]) throw new Error('Loại tiền không hỗ trợ.');
+      mc = round(mc);
+      if (!isFinite(mc) || mc <= 0) throw new Error('Số MC phải lớn hơn 0.');
+      const d = FIAT[currency].digits;
+      const fiat = Math.round(this.fxPrice(dir, currency) * mc * Math.pow(10, d)) / Math.pow(10, d);
+      return { mc: mc, fiat: fiat };
+    }
+
+    /** Bán MC lấy VND/USD: chuyển MC tới quầy; tiền VND/USD về tài khoản khi giao dịch được xác nhận. */
+    sellMC(owner, currency, mc, fee) {
+      const q = this.fxQuote('sell', currency, mc);
+      const ex = this.systemWallet('exchange');
+      const id = 'DT-' + uid().slice(0, 6).toUpperCase();
+      const tx = this.addTransaction(owner, ex.address, q.mc, 'Bán ' + q.mc + ' MC lấy ' + currency, fee, { kind: 'fx', ref: id });
+      const o = { id: id, owner: owner, dir: 'sell', currency: currency, mc: q.mc, fiat: q.fiat, rate: this.fxPrice('sell', currency), txId: tx.id, status: 'pending', time: Date.now() };
+      this.fxOrders.push(o);
+      return o;
+    }
+
+    /** Mua MC bằng VND/USD: trừ VND/USD ngay, quầy gửi MC cho bạn qua một giao dịch trên chuỗi. */
+    buyMC(owner, currency, mc) {
+      const w = this.walletOrThrow(owner);
+      if (w.locked) throw new Error('Ví đã bị quản trị viên khoá.');
+      const q = this.fxQuote('buy', currency, mc);
+      if (this.fiatOf(owner)[currency] < q.fiat) throw new Error('Tài khoản ' + currency + ' không đủ (cần ' + q.fiat + ').');
+      const ex = this.systemWallet('exchange');
+      const id = 'DT-' + uid().slice(0, 6).toUpperCase();
+      const tx = this.addTransaction(ex.address, owner, q.mc, 'Quầy đổi tiền bán ' + q.mc + ' MC (' + currency + ')', RULES.defaultFee, { kind: 'fx', ref: id });
+      this.addFiat(owner, currency, -q.fiat);
+      const o = { id: id, owner: owner, dir: 'buy', currency: currency, mc: q.mc, fiat: q.fiat, rate: this.fxPrice('buy', currency), txId: tx.id, status: 'pending', time: Date.now() };
+      this.fxOrders.push(o);
+      return o;
+    }
+
+    setFxRates(vnd, usd, spreadPercent) {
+      const v = Number(vnd), u = Number(usd), sp = Number(spreadPercent);
+      if (!isFinite(v) || v < 100 || v > 10000000) throw new Error('Tỷ giá VND phải từ 100 đến 10.000.000.');
+      if (!isFinite(u) || u < 0.01 || u > 10000) throw new Error('Tỷ giá USD phải từ 0,01 đến 10.000.');
+      if (!isFinite(sp) || sp < 0 || sp > 10) throw new Error('Chênh lệch mua–bán phải từ 0% đến 10%.');
+      this.fx = { rates: { VND: Math.round(v), USD: Math.round(u * 100) / 100 }, spread: sp / 100 };
+      this.log('Đổi tỷ giá: 1 MC = ' + this.fx.rates.VND + ' VND = ' + this.fx.rates.USD + ' USD, chênh lệch ' + sp + '%');
+    }
+
+    // ---------- Gửi tiết kiệm ----------
+    stake(owner, amount, planIndex, fee) {
+      const plan = STAKE_PLANS[Number(planIndex)];
+      if (!plan) throw new Error('Gói tiết kiệm không hợp lệ.');
+      amount = round(amount);
+      if (!isFinite(amount) || amount < 1) throw new Error('Số MC gửi tiết kiệm tối thiểu là 1 MC.');
+      const pool = this.systemWallet('staking');
+      const id = 'TK-' + uid().slice(0, 6).toUpperCase();
+      const tx = this.addTransaction(owner, pool.address, amount, 'Gửi tiết kiệm ' + plan.blocks + ' block (' + plan.rate * 100 + '%)', fee, { kind: 'stake', ref: id });
+      const st = { id: id, owner: owner, amount: amount, blocks: plan.blocks, rate: plan.rate, txId: tx.id, status: 'open', withdrawTxId: null, early: false, time: Date.now() };
+      this.stakes.push(st);
+      return st;
+    }
+
+    /** Tình trạng khoản tiết kiệm: chờ xác nhận / đang gửi / đến hạn / đang rút / đã rút / đã huỷ. */
+    stakeInfo(st) {
+      const interest = round(st.amount * st.rate);
+      if (st.status === 'cancelled') return { state: 'cancelled', interest: interest };
+      const start = this.txState(st.txId);
+      if (start.status === 'pending') return { state: 'pending', interest: interest };
+      if (start.status !== 'confirmed') return { state: 'cancelled', interest: interest };
+      const maturity = start.block + st.blocks;
+      const left = Math.max(0, maturity - this.latest.index);
+      if (st.withdrawTxId) {
+        const w = this.txState(st.withdrawTxId);
+        return { state: w.status === 'confirmed' ? 'withdrawn' : 'withdrawing', start: start.block, maturity: maturity, left: left, interest: interest };
+      }
+      return { state: left === 0 ? 'matured' : 'active', start: start.block, maturity: maturity, left: left, interest: interest };
+    }
+
+    /** Rút tiết kiệm: đến hạn thì nhận gốc + lãi; rút trước hạn chỉ nhận gốc. Quỹ trả MC qua một giao dịch trên chuỗi. */
+    withdrawStake(owner, id) {
+      const st = this.stakes.find(function (x) { return x.id === id; });
+      if (!st || st.owner !== owner) throw new Error('Không tìm thấy khoản tiết kiệm của bạn.');
+      const info = this.stakeInfo(st);
+      if (info.state === 'pending') throw new Error('Khoản gửi chưa được xác nhận – hãy đợi đào block.');
+      if (info.state !== 'active' && info.state !== 'matured') throw new Error('Khoản tiết kiệm này không rút được.');
+      const early = info.state === 'active';
+      const payout = round(st.amount + (early ? 0 : info.interest));
+      const pool = this.systemWallet('staking');
+      if (this.availableOf(pool.address) < payout + RULES.defaultFee) throw new Error('Quỹ tiết kiệm tạm thời không đủ MC để chi trả.');
+      const tx = this.addTransaction(pool.address, owner, payout, (early ? 'Rút trước hạn ' : 'Tất toán ') + st.id + (early ? '' : ' (gốc + lãi)'), RULES.defaultFee, { kind: 'unstake', ref: st.id });
+      st.withdrawTxId = tx.id;
+      st.early = early;
+      return { stake: st, payout: payout, early: early };
+    }
+
+    // ---------- Điều kiện đào block ----------
+    /** Danh sách điều kiện để ví `miner` được đào block kế tiếp. */
+    miningChecks(miner) {
+      const R = this.rules;
+      const w = this.wallets.find(function (x) { return x.address === miner; });
+      const bal = w ? this.balanceOf(miner) : 0;
+      let streak = 0;
+      for (let i = this.chain.length - 1; i > 0 && this.chain[i].miner === miner; i--) streak++;
+      const minTx = R.minTxToMine || 0, minBal = R.minMinerBalance || 0, maxRun = R.maxConsecutiveBlocks || Infinity;
+      return [
+        { key: 'login', ok: !!w, label: 'Đã đăng nhập ví', detail: w ? w.name : 'Chưa đăng nhập' },
+        { key: 'valid', ok: this.isValid(), label: 'Chuỗi khối hợp lệ', detail: this.isValid() ? 'Mọi block đều đúng' : 'Có block bị sửa' },
+        { key: 'locked', ok: !!w && !w.locked && !w.system, label: 'Ví không bị khoá', detail: w && w.locked ? 'Ví bị quản trị viên khoá' : 'Bình thường' },
+        { key: 'mempool', ok: this.pending.length >= minTx, label: 'Mempool có ít nhất ' + minTx + ' giao dịch', detail: 'Hiện có ' + this.pending.length },
+        { key: 'balance', ok: !!w && bal >= minBal, label: 'Số dư ví ≥ ' + minBal + ' MC (tiền đặt cọc)', detail: 'Hiện có ' + bal + ' MC' },
+        { key: 'streak', ok: streak < maxRun, label: 'Không đào quá ' + maxRun + ' block liên tiếp', detail: 'Đã đào liên tiếp ' + streak + ' block' }
+      ];
     }
 
     /**
@@ -518,6 +823,8 @@
       const prev = this.latest;
       const minerWallet = this.wallets.find(function (w) { return w.address === minerAddress; });
       if (minerWallet && minerWallet.locked) throw new Error('Ví đã bị quản trị viên khoá – không thể đào.');
+      const failed = this.miningChecks(minerAddress).filter(function (c) { return !c.ok; });
+      if (failed.length) throw new Error('Chưa đủ điều kiện đào: ' + failed.map(function (c) { return c.label.toLowerCase() + ' (' + c.detail.toLowerCase() + ')'; }).join('; ') + '.');
       const picked = this.selectForBlock().map(function (tx) { return Object.assign({}, tx); });
       const fees = picked.reduce(function (s, tx) { return s + Number(tx.fee || 0); }, 0);
       const reward = this.rewardAt(prev.index + 1);
@@ -545,6 +852,15 @@
       this.pending = this.pending.filter(function (tx) { return !ids.has(tx.id); });
       this.chain.push(block);
       this.reward = this.nextReward();
+      // Quyết toán lệnh đổi tiền: bán MC thì cộng VND/USD khi giao dịch đã vào block
+      const self = this;
+      block.transactions.forEach(function (tx) {
+        if (tx.kind !== 'fx') return;
+        const o = self.fxOrders.find(function (x) { return x.txId === tx.id && x.status === 'pending'; });
+        if (!o) return;
+        if (o.dir === 'sell') self.addFiat(o.owner, o.currency, o.fiat);
+        o.status = 'done';
+      });
       return this.retarget();
     }
 
@@ -570,6 +886,18 @@
           rulesOk = !!cb && cb.from === SYSTEM && round(cb.amount) <= round(self.rewardAt(i) + fees) &&
             users.every(function (tx) { return tx.from !== SYSTEM || tx.mint; }) && users.length <= R.maxTxPerBlock;
         }
+        // Điều kiện đào block (theo luật lúc block được đào)
+        let mineOk = true;
+        const mineWhy = [];
+        if (i > 0) {
+          const R2 = self.rulesAt(i);
+          const nUser = block.transactions.length - 1;
+          if (nUser < (R2.minTxToMine || 0)) { mineOk = false; mineWhy.push('block chỉ có ' + nUser + ' giao dịch (cần ≥ ' + R2.minTxToMine + ')'); }
+          if ((bal[block.miner] || 0) < (R2.minMinerBalance || 0)) { mineOk = false; mineWhy.push('thợ đào chỉ có ' + (bal[block.miner] || 0) + ' MC (cần ≥ ' + R2.minMinerBalance + ')'); }
+          let run = 0;
+          for (let k = i; k > 0 && chain[k].miner === block.miner; k--) run++;
+          if (R2.maxConsecutiveBlocks && run > R2.maxConsecutiveBlocks) { mineOk = false; mineWhy.push('thợ đào đã đào ' + run + ' block liên tiếp (tối đa ' + R2.maxConsecutiveBlocks + ')'); }
+        }
         // Luật số dư: không ví nào được chi quá số MC đang có
         let overspend = null;
         block.transactions.forEach(function (tx) {
@@ -587,8 +915,9 @@
         if (!linkOk) reasons.push('"Hash trước" không khớp với hash của block #' + (i - 1) + '.');
         if (!rulesOk) reasons.push('Vi phạm luật đồng thuận: coinbase vượt quá phần thưởng + phí, hoặc block quá ' + self.rulesAt(i).maxTxPerBlock + ' giao dịch.');
         if (!balanceOk) reasons.push('Vi phạm luật số dư: ví ' + self.nameOf(overspend) + ' chi nhiều hơn số MC đang có.');
+        if (!mineOk) reasons.push('Vi phạm điều kiện đào block: ' + mineWhy.join('; ') + '.');
         return {
-          index: i, valid: dataOk && powOk && linkOk && rulesOk && balanceOk, dataOk: dataOk, merkleOk: merkleOk, powOk: powOk, linkOk: linkOk, rulesOk: rulesOk, balanceOk: balanceOk,
+          index: i, valid: dataOk && powOk && linkOk && rulesOk && balanceOk && mineOk, mineOk: mineOk, dataOk: dataOk, merkleOk: merkleOk, powOk: powOk, linkOk: linkOk, rulesOk: rulesOk, balanceOk: balanceOk,
           merkle: merkle, recomputed: recomputed, reasons: reasons
         };
       });
@@ -633,6 +962,8 @@
     DEMO_PASSWORD: DEMO_PASSWORD,
     ADMIN_USER: ADMIN_USER,
     ADMIN_PASSWORD: ADMIN_PASSWORD,
+    STAKE_PLANS: STAKE_PLANS,
+    FIAT: FIAT,
     addressFromKey: addressFromKey
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = global.MiniChain;
